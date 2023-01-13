@@ -4,17 +4,20 @@ from scipy.special import jv, besselpoly, jn_zeros
 
 
 class Prebreakdown:
-    def __init__(s, x_min, x_max, y_min, y_max, points_x, points_y, v_bound):
-        s.xx, s.yy = np.meshgrid(np.linspace(x_min,x_max,points_x), np.linspace(y_min, y_max, points_y))
-        s.V = np.zeros(s.xx.shape)
+    def __init__(s, r_min, r_max, z_min, z_max, points_r, points_z, v_bound=lambda r,z : 0):
+        s.dr = (r_max - r_min) / points_r; s.dz = (z_max - z_min) / points_z
+        s.rr, s.zz = np.meshgrid(np.linspace(r_min,r_max,points_r), np.linspace(z_min, z_max, points_z))
+        s.V = np.zeros(s.rr.shape)
 
         #set boundary conditions from function v_bound
-        s.V[0,:] = v_bound(s.xx[0,:], s.yy[0,:])
-        s.V[:,0] = v_bound(s.xx[:,0], s.yy[:,0])
-        s.V[-1,:] = v_bound(s.xx[-1,:], s.yy[-1,:])
-        s.V[:,-1] = v_bound(s.xx[:,-1], s.yy[:,-1])
+        s.V[0,:] = v_bound(s.rr[0,:], s.zz[0,:])
+        s.V[:,0] = v_bound(s.rr[:,0], s.zz[:,0])
+        s.V[-1,:] = v_bound(s.rr[-1,:], s.zz[-1,:])
+        s.V[:,-1] = v_bound(s.rr[:,-1], s.zz[:,-1])
 
-        s.a = np.ones(s.V.shape); s.b = np.ones(s.V.shape); s.c = np.ones(s.V.shape); s.d = np.ones(s.V.shape);
+        s.a = np.ones(s.V.shape); s.b = np.ones(s.V.shape);
+        s.c = (s.rr + s.dr / 2) / s.rr; s.d = (s.rr - s.dr / 2) / s.rr
+
         s.e = -4 * np.ones(s.V.shape);
         s.f = np.zeros(s.V.shape)
 
@@ -22,8 +25,8 @@ class Prebreakdown:
         #successive overrelaxation
         #see e.g. Numerical Recipes Chapter 20
         #a,b,c,d,f: finite differencing coefficients
-        j_max = s.xx.shape[0]
-        l_max = s.xx.shape[1]
+        j_max = s.rr.shape[0]
+        l_max = s.rr.shape[1]
         omega = 1
         for n in range(iter):
             if n % 10 == 0:
