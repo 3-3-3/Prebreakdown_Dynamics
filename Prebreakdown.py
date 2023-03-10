@@ -5,9 +5,25 @@ import scipy.constants as pc
 
 
 class Prebreakdown:
-    def __init__(s, r_min, r_max, z_min, z_max, points_r, points_z, dt, nu=0, v_bound=lambda r,z : 0):
-        s.dr = (r_max - r_min) / points_r; s.dz = (z_max - z_min) / points_z
-        s.rr, s.zz = np.meshgrid(np.linspace(r_min,r_max,points_r), np.linspace(z_min, z_max, points_z))
+    def __init__(s, N_r, N_z, Dr, Dz, dt, nu=0,
+                    V_top=lambda r : 0, V_bottom=lambda r : 0,
+                    V_r=lambda z : 0):
+        '''
+        r_min (usually 0): Minimum radial value in domain
+        r_max: Maximum radial value in domain
+        z_min, z_max: minimum and maximum z values
+        points_r, points_z: Number of points to use in r and z directions
+        dt: time step for continuity and fluid equations
+        V_top: function describing top boundary (z=z_max) for potential
+        V_bottom: function describing bottom boundary (z=z_min) for potential
+        V_min: function describing boundary at r=0 for potential
+        V_max: function describing boundary at r=r_max for potential
+        '''
+        s.dr = Dr; s.dz = Dz
+        s.N_r = N_r; s.N_z = N_z
+        s.r_max = s.dr * s.N_r; s.z_max = s.dz * N_z
+        s.rr, s.zz = np.meshgrid(np.linspace(0, s.r_max, s.N_r),
+                                    np.linspace(0, s.z_max, s.N_z))
         s.V = np.zeros(s.rr.shape) #Potential
         s.n = np.zeros(s.rr.shape) #electron density
         s.u_r = np.zeros(s.rr.shape) #electron velocity density in r
@@ -17,17 +33,24 @@ class Prebreakdown:
         s.nu = nu #neutral collision frequency
         s.dt = dt #time step
 
-
-        #set boundary conditions from function v_bound
-        s.V[0,:] = v_bound(s.rr[0,:], s.zz[0,:])
-        s.V[:,0] = v_bound(s.rr[:,0], s.zz[:,0])
-        s.V[-1,:] = v_bound(s.rr[-1,:], s.zz[-1,:])
-        s.V[:,-1] = v_bound(s.rr[:,-1], s.zz[:,-1])
-
         #finite difference coefficients for solving Poisson's equation with sor
+        #see derivation notes
         s.a = np.ones(s.V.shape); s.b = np.ones(s.V.shape);
         s.c = (s.rr + s.dr / 2) / s.rr; s.d = (s.rr - s.dr / 2) / s.rr
         s.e = -4 * np.ones(s.V.shape)
+        s.f = np.zeros(s.V.shape) #source term e/e_0 * Dz * Dr * n
+        #finite difference coefficients for solving Poisson's equation at the r=0 boundary
+        s.a_b = 1; s.b_b = 1; s.c_b = 4; s.e_b = -6
+
+
+        #set boundary conditions
+        for i in range(s.zz[:,0].size):
+            s.V[i,0] = V_r(s.zz[i,0])
+            s.V[i,-1] = V_r(s.zz[i,0])
+
+        for i in range(s.rr[0,:].size):
+            s.V[0,i] = V_bottom(s.rr[0,i])
+            s.V[-1,i] = V_top(s.rr[-1,i])
 
     def fluid(s):
         #solve fluid equation using leapfrog
@@ -66,27 +89,38 @@ class Prebreakdown:
         s.n = n_new
 
     def sor(s, sp_r, iter):
-        #successive overrelaxation to solve Poisson's equation
+        #successive overrelaxation
         #see e.g. Numerical Recipes Chapter 20
+        #a,b,c,d,f: finite differencing coefficients
         j_max = s.rr.shape[0]
         l_max = s.rr.shape[1]
         omega = 1
         for n in range(iter):
             if n % 10 == 0:
                 print(n)
-            jsw = 1
+            lsw = 1
             for ipass in range(2): #odd-even ordering
-                lsw = jsw
-                for j in range(1,j_max-1):
-                    for l in range(lsw, l_max-1, 2):
-                        res = s.a[j][l] * s.V[j+1][l] + s.b[j][l] * s.V[j-1][l] + s.c[j][l] * s.V[j][l + 1] \
-                                + s.d[j][l] * s.V[j][l - 1] + s.e[j][l] * s.V[j][l] - pc.e * s.dz * s.dr * s.n[j][l] #residual at nth step
+                jsw = lsw
+                for j in range(jsw, j_max-1, 2):
+                    #First, we loop over j (z-direction) with Dirichlet boundaries on both ends
+                    for l in range(l_max-2,0,-1): #Next, we loop backwards over l so that we begin with the Dirichlet condition at L (r_max)
+                                                    #and then we end the loop at l=1
+                                                    #and finally treat the l=0 case–the von Neuman boundary seperatly, before incrementing j and starting over
+
+                        res = s.a[j,l] * s.V[j+1, l] + s.b[j, l] * s.V[j-1, l] + s.c[j, l] * s.V[j, l + 1] \
+                                + s.d[j, l] * s.V[j, l - 1] + s.e[j, l] * s.V[j, l] - s.f[j, l] #residual at nth step
 
                         #anorm += np.abs(res)
-                        s.V[j][l] -= omega * res / s.e[j][l]
-                    lsw = 3 - jsw #(3 - 1 --> 2, 3 - 2 --> 1 etc.)
+                        #weighted average of old potential and new potential
+                        s.V[j,l] -= omega * res / s.e[j,l]
 
-                jsw = 3 - jsw
+                    #implement Neuman/axisymmetric boundary condition for l = 0
+                    res = s.a_b * s.V[j+1,0] + s.b_b * s.V[j-1,0] + s.c_b * s.V[j,1] + s.e_b * s.V[j,0]
+                    s.V[j,0] -= omega * res / s.e[j,l]
+
+                    jsw = 3 - jsw #(3 - 1 --> 2, 3 - 2 --> 1 etc.)
+
+                lsw = 3 - lsw
 
                 if n == 0 and ipass == 0:
                     omega = 1 / (1 - 0.5 * sp_r ** 2)
