@@ -152,24 +152,7 @@ class Prebreakdown:
                         print(f'Error reduced by factor of {EPS} in {n} iterations')
                         return True
                 else:
-                    anorm_i = anorm 
+                    anorm_i = anorm
 
         print(f'Error reduced by factor of {anorm} in {iter} iterations')
         return False
-
-
-
-
-def B(n, a, V_0):
-    a_n = jn_zeros(0, n) #first n zeros of first order Bessel equation
-    return 2 * V_0 / (jv(1, a_n) ** 2 * np.cosh(a_n)) * besselpoly(a_n / 2, 1, 0)
-
-def cylindrical_check(n, rr, zz, a, V_0):
-    b = B(n, a, V_0)
-    a_n = jn_zeros(0, n)
-
-    e = np.zeros(rr.shape)
-    for i in range(1,n):
-        e += b[i] * jv(0, a_n[i] / a * rr) * np.cosh(a_n[i] / a * zz)
-
-    return e
