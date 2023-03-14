@@ -88,17 +88,36 @@ class Prebreakdown:
         s.n_old = s.n
         s.n = n_new
 
-    def sor(s, sp_r, iter):
+    def sor(s, sp_r, iterations=1000, EPS=1e-10):
         #successive overrelaxation
         #see e.g. Numerical Recipes Chapter 20
         #a,b,c,d,f: finite differencing coefficients
         j_max = s.rr.shape[0]
         l_max = s.rr.shape[1]
         omega = 1
-        for n in range(iter):
+        anorm_i = 0 #magnitude of initial residual vector
+                    #to use as a criterion for stopping
+
+        anorm = 0
+
+        for j in range(1,j_max-1):
+            for l in range(l_max-2,0,-1):
+                res = s.a[j,l] * s.V[j+1, l] + s.b[j, l] * s.V[j-1, l] + s.c[j, l] * s.V[j, l + 1] \
+                        + s.d[j, l] * s.V[j, l - 1] + s.e[j, l] * s.V[j, l] - s.f[j, l] #residual at nth step
+                anorm_i += np.abs(res)
+
+            res = s.a_b * s.V[j+1,0] + s.b_b * s.V[j-1,0] + s.c_b * s.V[j,1] + s.e_b * s.V[j,0]
+            anorm_i += np.abs(res)
+
+
+
+
+        for n in range(iterations):
             if n % 10 == 0:
                 print(n)
             lsw = 1
+            anorm = 0
+
             for ipass in range(2): #odd-even ordering
                 jsw = lsw
                 for j in range(jsw, j_max-1, 2):
@@ -110,12 +129,13 @@ class Prebreakdown:
                         res = s.a[j,l] * s.V[j+1, l] + s.b[j, l] * s.V[j-1, l] + s.c[j, l] * s.V[j, l + 1] \
                                 + s.d[j, l] * s.V[j, l - 1] + s.e[j, l] * s.V[j, l] - s.f[j, l] #residual at nth step
 
-                        #anorm += np.abs(res)
+                        anorm += np.abs(res)
                         #weighted average of old potential and new potential
                         s.V[j,l] -= omega * res / s.e[j,l]
 
                     #implement Neuman/axisymmetric boundary condition for l = 0
                     res = s.a_b * s.V[j+1,0] + s.b_b * s.V[j-1,0] + s.c_b * s.V[j,1] + s.e_b * s.V[j,0]
+                    anorm += np.abs(res)
                     s.V[j,0] -= omega * res / s.e[j,l]
 
                     jsw = 3 - jsw #(3 - 1 --> 2, 3 - 2 --> 1 etc.)
@@ -126,6 +146,18 @@ class Prebreakdown:
                     omega = 1 / (1 - 0.5 * sp_r ** 2)
                 else:
                     omega = 1 / (1 - 0.25 * sp_r ** 2 * omega)
+
+                if n > 5:
+                    if anorm <= EPS*anorm_i:
+                        print(f'Error reduced by factor of {EPS} in {n} iterations')
+                        return True
+                else:
+                    anorm_i = anorm 
+
+        print(f'Error reduced by factor of {anorm} in {iter} iterations')
+        return False
+
+
 
 
 def B(n, a, V_0):
