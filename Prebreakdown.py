@@ -2,12 +2,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.special import jv, besselpoly, jn_zeros
 import scipy.constants as pc
+import os
+from os.path import join
+
 
 
 class Prebreakdown:
     def __init__(s, N_r, N_z, Dr, Dz, dt, nu=0,
                     V_top=lambda r : 0, V_bottom=lambda r : 0,
-                    V_r=lambda z : 0):
+                    V_r=lambda z : 0,save_dir='/'):
         '''
         r_min (usually 0): Minimum radial value in domain
         r_max: Maximum radial value in domain
@@ -19,6 +22,7 @@ class Prebreakdown:
         V_min: function describing boundary at r=0 for potential
         V_max: function describing boundary at r=r_max for potential
         '''
+        s.time = 0 #time since start of simulation
         s.dr = Dr; s.dz = Dz
         s.N_r = N_r; s.N_z = N_z
         s.r_max = s.dr * s.N_r; s.z_max = s.dz * N_z
@@ -42,6 +46,10 @@ class Prebreakdown:
         #finite difference coefficients for solving Poisson's equation at the r=0 boundary
         s.a_b = 1; s.b_b = 1; s.c_b = 4; s.e_b = -6
 
+        s.e_c = pc.e
+        s.m_e = pc.m_e
+        s.nu = 0 #friction coefficient
+
 
         #set boundary conditions
         for i in range(s.zz[:,0].size):
@@ -53,40 +61,120 @@ class Prebreakdown:
             s.V[-1,i] = V_top(s.rr[-1,i])
 
     def fluid(s):
-        #solve fluid equation using leapfrog
-        j_max = s.rr.shape[0]
-        l_max = s.rr.shape[0]
-        u_r_new = s.u_r; u_z_new = s.u_z
+        #solve fluid equation with operator splitting
+        #(most of these should be able to be combined)
+        #(but makes thinking about stability conditions easier)
+        dt_p = s.dt / 4
+        u_r_new = s.u_r
+        u_z_new = s.u_z
 
-        for j in range(1, j_max - 1):
-            for l in range(1, l_max - 1):
-                u_r_new[j][l] = s.u_r_old[j][l] - s.u_r[j][l] * s.dt / s.dr * (s.u_r[j+1][l] - s.u_r[j-1][l]) \
-                            - s.u_z[j][l] * s.dt / s.dz * (s.u_r[j][l+1] - s.u_r[j][l-1]) - s.nu * s.u_r[j][l] * s.dt \
-                            - pc.e / pc.m_e * s.dt / s.dr * (s.V[j+1][l] - s.V[j-1][l])
+        #first quarter step (field terms)
+        for j in range(1,j_max): #loop over all j, excluding boundaries
+            for l in range(1,l_max): #loop over all l, excluding boundaries
+                u_r_new[j,l] = s.u_r_old[j,l] - s.e_c/s.m_e * dt_p/s.dr * (s.V[j,l+1] - s.V[j,l-1])
+                u_z_new[j,l] = s.u_z_old[j,l] - s.e_c/s.m_e * dt_p/s.dz * (s.V[j+1,l] - s.V[j-1,l])
 
-                u_z_new[j][l] = s.u_z_old[j][l] - s.u_r[j][l] * s.dt / s.dr * (s.u_z[j+1][l] - s.u_z[j-1][l]) \
-                            - s.u_z[j][l] * s.dt / s.dz * (s.u_z[j][l+1] - s.u_z[j][l-1]) - s.nu * s.u_z[j][l] \
-                            - pc.e / pc.m_e * s.dt / s.dr * (s.V[j][l+1] - s.V[j][l-1])
+        s.u_r_old = s.u_r
+        s.u_z_old = s.u_z
+        s.u_r = u_r_new
+        s.u_z = u_z_new
 
-            s.u_r_old = s.u_r; s.u_z_old = s.u_z
-            s.u_r = u_r_new; s.u_z = u_r_new
+        #second quarter step (friction terms)
+        for j in range(1,j_max):
+            for l in range(1,l_max):
+                u_r_new[j,l] = s.u_r_old[j,l] - 2*s.nu*s.u_r[j,l]*dt_p
+                u_z_new[j,l] = s.u_z_old[j,l] - 2*s.nu*s.u_z[j,l]*dt_p
+
+        s.u_r_old = s.u_r
+        s.u_z_old = s.u_z
+        s.u_r = u_r_new
+        s.u_z = u_z_new
+
+        #third quarter step (uncoupled convective terms)
+        for j in range(1,j_max):
+            for l in range(1,l_max):
+                u_r_new[j,l] = s.u_r_old[j,l] - s.u_r[j,l]*dt_p/s.dr*(s.u_r[j,l+1] - s.u_r[j,l-1])
+                u_z_new[j,l] = s.u_z_old[j,l] - s.u_r[j,l]*dt_p/s.dz*(s.u_z[j+1,l] - s.u_z[j+1,l])
+
+        s.u_r_old = s.u_r
+        s.u_z_old = s.u_z
+        s.u_r = u_r_new
+        s.u_z = u_z_new
+
+        #fourth quarter step (coupled convective terms)
+        for j in range(1,j_max):
+            for l in range(1,l_max):
+                u_r_new[j,l] = s.u_r_old[j,l] - s.u_z[j,l]*dt_p/s.dz*(s.u_z[j+1,l]-s.u_z[j-1,l])
+                u_z_new[j,l] = s.u_z_old[j,l] - s.u_r[j,l]*dt_p/s.dr*(s.u_r[j,l+1]-s.u_r[j,l-1])
+
+        s.u_r_old = s.u_r
+        s.u_z_old = s.u_z
+        s.u_r = u_r_new
+        s.u_z = u_z_new
+
+
 
     def continuity(s):
         #solve continuity equation using leapfrog
+        #and relevant boundary conitions
+        #see derivation notes
         j_max = s.rr.shape[0]
         l_max = s.rr.shape[0]
         n_new = s.n
 
-        for j in range(1, j_max - 1):
-            for l in range(1, l_max - 1):
-                #loop over all gridpoints (except boundaries)
-                n_new[j][l] = s.n_old[j][l] \
-                    - 1 / s.rr[j][l] * s.dt / s.dr \
-                    * (s.rr[j+1][l] * s.n[j+1][l] * s.u_r[j+1][l] - s.rr[j-1][l] * s.n[j-1][l] * s.u_r[j-1][l]) \
-                    - s.dt / s.dz * (s.n[j][l+1] * s.u_z[j][l+1] - s.n[j][l-1] * s.u_z[j][l-1])
+
+        #update boundary point at l=0 and j=j_max
+        n_new[j_max,0] = s.n_old[j_max,0] - s.dt/s.dz*s.n[j_max,0]*s.u_z[j_max,0]
+
+        #begin loop over all other non-derichlet points
+        for j in range(1, j_max): #loop over j (z)
+            #Deal with von Neumann-0/axis symmetric boundary condition at r=0
+            n_new[j,0] = s.n_old[j,0] - s.dt / s.dz*(s.n[j+1,0]*s.u_z[j+1,0] - s.n[j-1,0]*s.u_z[j-1,0])
+
+            if j == j_max: #boundary at z=1
+                for l in range(1, l_max - 1):
+                    #Deal with von Neumann-0 boundary condition at z=1
+                    n_new[j_max,l] = s.n_old[j_max,l] \
+                        - 1/s.rr[j_max,l]*s.dt/s.dr*[s.rr[j_max,l+1]*s.n[j_max,l+1]*s.u_r[j_max,l+1] \
+                        - s.rr[j_max,l-1]*s.n[j_max,l-1]*s.u_r[j_max,l-1]] - s.dt / s.dz*(s.n[j_max,l]*s.u[j_max-1,l])
+
+            else:
+                for l in range(1, l_max - 1): #loop over l (r)
+                    #loop over all other gridpoints
+                    n_new[j,l] = s.n_old[j,l] \
+                        - 1 / s.rr[j,l] * s.dt / s.dr \
+                        * (s.rr[j+1,l] * s.n[j+1,l] * s.u_r[j+1,l] - s.rr[j-1,l] * s.n[j-1,l] * s.u_r[j-1,l]) \
+                        - s.dt / s.dz * (s.n[j,l+1] * s.u_z[j,l+1] - s.n[j,l-1] * s.u_z[j,l-1])
 
         s.n_old = s.n
         s.n = n_new
+
+    def cont_dt_lim(s):
+        dt = []
+        for j in range(1,r.shape[0]-1):
+            for l in range(1,r.shape[1]-1):
+                beta = np.abs((r[j,l+1]*u_r[j,l+1] - r[j,l-1]*u_r[j,l-1]) / r[j,l] \
+                                   + u_z[j+1,l] - u_z[j-1,l])
+                print(beta)
+                dt.append(np.sqrt(5) * 1 / beta)
+
+        return np.min(dt)
+
+    def fluid_r_lim(s):
+        dt = []
+        for j in range(1,r.shape[0]-1):
+            for l in range(1,r.shape[1]-1):
+                dt.append(s.dr / (2 * s.u_r[j,l]))
+
+        return 4*np.min(dt)
+
+    def fluid_z_lim(s):
+        dt = []
+        for j in range(1,r.shape[0]-1):
+            for l in range(1,r.shape[1]-1):
+                dt.append(s.dz / (2 * s.u_z[j,l]))
+
+        return 4*np.min(dt)
 
     def sor(s, sp_r, iterations=1000, EPS=1e-10):
         #successive overrelaxation
@@ -110,11 +198,9 @@ class Prebreakdown:
             anorm_i += np.abs(res)
 
 
-
-
         for n in range(iterations):
-            if n % 10 == 0:
-                print(n)
+            #if n % 10 == 0:
+                #print(n)
             lsw = 1
             anorm = 0
 
@@ -156,3 +242,34 @@ class Prebreakdown:
 
         print(f'Error reduced by factor of {anorm} in {iter} iterations')
         return False
+
+    def step(s,save=True):
+        #Begin by choosing a stable dt for the step
+        s.dt = np.min(s.cont_dt_lim(), s.fluid_r_lim(), s.fluid_z_lim())
+        #next, resolve the potential
+        print('[*] Resolving potential')
+        s.sor(0.97)
+        #then, update u_r and u_z
+        print('[*] Solving fluid equation')
+        s.fluid()
+        #and finally, update n
+        print('[*] Solving continuity equation')
+        s.continuity()
+
+        if save:
+            s.save()
+
+    def save(s,verbose=True):
+        dir = join(save_dir, f'at_{s.time}')
+        if verbose:
+            print(f'[**] Saving in {dir}')
+
+        try:
+            os.mmkdir(dir)
+        except FileExistsError:
+            pass
+
+        np.save(join(dir,'V.npy'),s.V)
+        np.save(join(dir,'n.npy'),s.n)
+        np.save(join(dir,'u_r.npy'),s.u_r)
+        np.save(join(dir,'u_z.npy'),s.u_z)
