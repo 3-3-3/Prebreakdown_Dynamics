@@ -10,7 +10,9 @@ from os.path import join
 class Prebreakdown:
     def __init__(s, N_r, N_z, Dr, Dz, dt, nu=0,
                     V_top=lambda r : 0, V_bottom=lambda r : 0,
-                    V_r=lambda z : 0,save_dir='/'):
+                    V_r=lambda z : 0, n_bottom=lambda r : 0,
+                    u_z_bottom=lambda r : 0,
+                    save_dir='/'):
         '''
         r_min (usually 0): Minimum radial value in domain
         r_max: Maximum radial value in domain
@@ -19,6 +21,7 @@ class Prebreakdown:
         dt: time step for continuity and fluid equations
         V_top: function describing top boundary (z=z_max) for potential
         V_bottom: function describing bottom boundary (z=z_min) for potential
+        n_bottom: function describing density at z=z_min
         V_min: function describing boundary at r=0 for potential
         V_max: function describing boundary at r=r_max for potential
         '''
@@ -51,14 +54,25 @@ class Prebreakdown:
         s.nu = 0 #friction coefficient
 
 
-        #set boundary conditions
+        #***set Dirichlet boundary conditions***
+        #first, set in r
         for i in range(s.zz[:,0].size):
-            s.V[i,0] = V_r(s.zz[i,0])
+            #potential at r=r_max
             s.V[i,-1] = V_r(s.zz[i,0])
+            #density at r=r_max (vanishing)
+            s.n[i,-1] = 0
+            #velocity at r=r_max (vanishing)
+            s.u_r[i,-1] = 0
+            s.u_z[i,-1] = 0
 
+        #then, in z
         for i in range(s.rr[0,:].size):
+            #potential at z=0, z=z_max
             s.V[0,i] = V_bottom(s.rr[0,i])
             s.V[-1,i] = V_top(s.rr[-1,i])
+            #density at z=0 (user defined)
+            s.n[0,i] = n_bottom(s.rr[0,i])
+            #u_r (vanishing everywhere)
 
     def fluid(s):
         #solve fluid equation with operator splitting
@@ -120,50 +134,45 @@ class Prebreakdown:
         #see derivation notes
         j_max = s.rr.shape[0]
         l_max = s.rr.shape[0]
-        n_new = s.n
+        n_new = s.n.copy()
 
 
         #update boundary point at l=0 and j=j_max
-        n_new[j_max,0] = s.n_old[j_max,0] - s.dt/s.dz*s.n[j_max,0]*s.u_z[j_max,0]
+        n_new[j_max-1,0] = s.n_old[j_max-1,0] - s.dt/s.dz*s.n[j_max-1,0]*s.u_z[j_max-1,0]
 
         #begin loop over all other non-derichlet points
         for j in range(1, j_max): #loop over j (z)
-            #Deal with von Neumann-0/axis symmetric boundary condition at r=0
-            n_new[j,0] = s.n_old[j,0] - s.dt / s.dz*(s.n[j+1,0]*s.u_z[j+1,0] - s.n[j-1,0]*s.u_z[j-1,0])
-
-            if j == j_max: #boundary at z=1
+            if j == (j_max-1): #boundary at z=1
                 for l in range(1, l_max - 1):
                     #Deal with von Neumann-0 boundary condition at z=1
-                    n_new[j_max,l] = s.n_old[j_max,l] \
-                        - 1/s.rr[j_max,l]*s.dt/s.dr*[s.rr[j_max,l+1]*s.n[j_max,l+1]*s.u_r[j_max,l+1] \
-                        - s.rr[j_max,l-1]*s.n[j_max,l-1]*s.u_r[j_max,l-1]] - s.dt / s.dz*(s.n[j_max,l]*s.u[j_max-1,l])
+                    #we assume that the z-velocity and the density are the same on each side of the boundary
+                    n_new[j,l] = s.n[j-1,l]
+
 
             else:
                 for l in range(1, l_max - 1): #loop over l (r)
                     #loop over all other gridpoints
                     n_new[j,l] = s.n_old[j,l] \
                         - 1 / s.rr[j,l] * s.dt / s.dr \
-                        * (s.rr[j+1,l] * s.n[j+1,l] * s.u_r[j+1,l] - s.rr[j-1,l] * s.n[j-1,l] * s.u_r[j-1,l]) \
-                        - s.dt / s.dz * (s.n[j,l+1] * s.u_z[j,l+1] - s.n[j,l-1] * s.u_z[j,l-1])
+                        * (s.rr[j,l+1] * s.n[j,l+1] * s.u_r[j,l+1] - s.rr[j,l-1] * s.n[j,l-1] * s.u_r[j,l-1]) \
+                        - s.dt / s.dz * (s.n[j+1,l] * s.u_z[j+1,l] - s.n[j-1,l] * s.u_z[j-1,l])
 
-        s.n_old = s.n
-        s.n = n_new
+        s.n_old = s.n.copy()
+        s.n = n_new.copy()
+
 
     def cont_dt_lim(s):
-        dt = []
-        for j in range(1,r.shape[0]-1):
-            for l in range(1,r.shape[1]-1):
-                beta = np.abs((r[j,l+1]*u_r[j,l+1] - r[j,l-1]*u_r[j,l-1]) / r[j,l] \
-                                   + u_z[j+1,l] - u_z[j-1,l])
-                print(beta)
-                dt.append(np.sqrt(5) * 1 / beta)
+        dt_z = []
+        for j in range(1,s.rr.shape[0]-1):
+            for l in range(1,s.rr.shape[1]-1):
+                dt_z.append(s.dz / s.u_z[j,l])
 
-        return np.min(dt)
+        return np.min(dt_z)
 
     def fluid_r_lim(s):
         dt = []
-        for j in range(1,r.shape[0]-1):
-            for l in range(1,r.shape[1]-1):
+        for j in range(1,s.rr.shape[0]-1):
+            for l in range(1,s.rr.shape[1]-1):
                 dt.append(s.dr / (2 * s.u_r[j,l]))
 
         return 4*np.min(dt)
@@ -273,3 +282,11 @@ class Prebreakdown:
         np.save(join(dir,'n.npy'),s.n)
         np.save(join(dir,'u_r.npy'),s.u_r)
         np.save(join(dir,'u_z.npy'),s.u_z)
+
+    def viz_V(s):
+        fig, ax = plt.subplots(subplot_kw={"projection" : "3d"})
+        ax.set_xlabel('r')
+        ax.set_ylabel('z')
+        ax.set_zlabel('Potential')
+        ax.plot_surface(s.rr,s.zz,s.V,cmap=cm.bone,linewidth=0,antialiased=False)
+        plt.show()
