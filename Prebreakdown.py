@@ -136,38 +136,39 @@ class Prebreakdown:
         l_max = s.rr.shape[0]
         n_new = s.n.copy()
 
-
-        #update boundary point at l=0 and j=j_max
-        n_new[j_max-1,0] = s.n_old[j_max-1,0] - s.dt/s.dz*s.n[j_max-1,0]*s.u_z[j_max-1,0]
-
         #begin loop over all other non-derichlet points
         for j in range(1, j_max): #loop over j (z)
             if j == (j_max-1): #boundary at z=1
-                for l in range(1, l_max - 1):
+                for l in range(1, l_max - 1): #loop over interior r at boundary
                     #Deal with von Neumann-0 boundary condition at z=1
                     #we assume that the z-velocity and the density are the same on each side of the boundary
                     n_new[j,l] = s.n[j-1,l]
 
 
             else:
-                for l in range(1, l_max - 1): #loop over l (r)
-                    #loop over all other gridpoints
+                #update r=0 boundary
+                n_new[j,0] = s.n[j,1]
+
+                for l in range(1, l_max - 1): #loop over all interior points in r
                     n_new[j,l] = s.n_old[j,l] \
                         - 1 / s.rr[j,l] * s.dt / s.dr \
                         * (s.rr[j,l+1] * s.n[j,l+1] * s.u_r[j,l+1] - s.rr[j,l-1] * s.n[j,l-1] * s.u_r[j,l-1]) \
                         - s.dt / s.dz * (s.n[j+1,l] * s.u_z[j+1,l] - s.n[j-1,l] * s.u_z[j-1,l])
+
+                #update r=R boundary
+                n_new[j,l_max-1] = s.n[j,l_max-1]
 
         s.n_old = s.n.copy()
         s.n = n_new.copy()
 
 
     def cont_dt_lim(s):
-        dt_z = []
+        dt = []
         for j in range(1,s.rr.shape[0]-1):
             for l in range(1,s.rr.shape[1]-1):
-                dt_z.append(s.dz / s.u_z[j,l])
+                dt.append(s.dz / (s.u_z[j,l] ** 2 + s.u_r ** 2))
 
-        return np.min(dt_z)
+        return np.min(dt)
 
     def fluid_r_lim(s):
         dt = []
