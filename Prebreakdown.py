@@ -59,20 +59,15 @@ class Prebreakdown:
         for i in range(s.zz[:,0].size):
             #potential at r=r_max
             s.V[i,-1] = V_r(s.zz[i,0])
-            #density at r=r_max (vanishing)
-            s.n[i,-1] = 0
-            #velocity at r=r_max (vanishing)
-            s.u_r[i,-1] = 0
-            s.u_z[i,-1] = 0
 
         #then, in z
         for i in range(s.rr[0,:].size):
             #potential at z=0, z=z_max
             s.V[0,i] = V_bottom(s.rr[0,i])
             s.V[-1,i] = V_top(s.rr[-1,i])
-            #density at z=0 (user defined)
-            s.n[0,i] = n_bottom(s.rr[0,i])
-            #u_r (vanishing everywhere)
+
+        s.n_bottom = n_bottom
+        s.u_z_bottom = u_z_bottom
 
     def fluid(s):
         #solve fluid equation with operator splitting
@@ -132,31 +127,68 @@ class Prebreakdown:
         #solve continuity equation using leapfrog
         #and relevant boundary conitions
         #see derivation notes
-        j_max = s.rr.shape[0]
-        l_max = s.rr.shape[0]
+        j_max = s.rr.shape[0] - 1
+        l_max = s.rr.shape[0] - 1
         n_new = s.n.copy()
 
-        #begin loop over all other non-derichlet points
-        for j in range(1, j_max): #loop over j (z)
-            if j == (j_max-1): #boundary at z=1
-                for l in range(1, l_max - 1): #loop over interior r at boundary
-                    #Deal with von Neumann-0 boundary condition at z=1
-                    #we assume that the z-velocity and the density are the same on each side of the boundary
-                    n_new[j,l] = s.n[j-1,l]
+        #Begin by looping over all interior points
+        for j in range(1, j_max - 1): #loop over j (z)
+            for l in range(2, l_max - 1): #loop over l (r)
+                n_new[j,l] = s.n_old[j,l] \
+                    - 1 / s.rr[j,l] * s.dt / s.dr \
+                    * (s.rr[j,l+1] * s.n[j,l+1] * s.u_r[j,l+1] - s.rr[j,l-1] * s.n[j,l-1] * s.u_r[j,l-1]) \
+                    - s.dt / s.dz * (s.n[j+1,l] * s.u_z[j+1,l] - s.n[j-1,l] * s.u_z[j-1,l])
+
+        #Now, update boundaries
+        #First, take care of boundaries at l=0 and l=L
+        for j in range(1, j_max):
+            #update boundary at l=0 (von Neumann-0 by symmetry)
+            n_new[j,0] = s.n_old[j,0] - s.dt/s.dz*(s.n[j+1,0]*s.u_z[j+1,0]-s.n[j-1,0]*s.u_z[j-1,0]) \
+                            - 2*s.dt/s.dr*(s.n[j,1]*s.u_r[j,1]-s.n[j,0]*s.u_r[j,0])
+            #update boundary at l=1, which is also effected by l=0
+            n_new[j,1] = s.n_old[j,1] - s.dt/s.dz*(s.n[j+1,1]*s.u_z[j+1,1]-s.n[j-1,1]*s.u_z[j-1,1]) \
+                            - s.dt/s.dr*(s.rr[j,2]/s.rr[j,1]*s.n[j,2]*s.u_r[j,2]+s.n[j,1]*s.u_r[j,1]-2*s.n[j,0]*s.u_r[j,0])
+                            #- 2*s.dt/s.dr*((s.rr[j,2]*s.n[j,2]*s.u_r[j,2]-s.rr[j,1]*s.n[j,1]*s.u_r[j,1])/(s.rr[j,2]+s.rr[j,1]) + s.n[j,1]*s.u_r[j,1] - s.n[j,0]*s.u_r[j,0])
+                            #- s.dt/s.dr*(s.rr[j,2]*s.n[j,2]*s.u_r[j,2]-s.rr[j,2]*s.n[j,1]*s.u_r[j,1]+2*s.n[j,0]*s.u_r[j,0]-2*s.n[j,1]*s.u_r[j,1])
+            #update boundary at l=L (von Neumann-0 due to diffuse condition)
+            n_new[j,l_max] = s.n_old[j,l_max] + 1/s.rr[j,l_max]*s.dt/s.dr*(s.rr[j,l_max-1]*s.u_r[j,l_max-1]*s.n[j,l_max-1]) \
+                                    - s.dt/s.dz*(s.u_z[j+1,l_max]*s.n[j+1,l_max]-s.u_z[j-1,l_max]*s.n[j-1,l_max])
+
+        #Next, do the boundaries at j=0 and j=j_max
+        for l in range(1,l_max):
+            #update boundary at j=0 (set by photoelectric effect)
+            n_new[0,l] = s.n_old[0,l] - 1/s.rr[0,l]*s.dt/s.dr*(s.rr[0,l+1]*s.n[0,l+1]*s.u_r[0,l+1]-s.rr[0,l-1]*s.n[0,l-1]*s.u_r[0,l-1]) \
+                                - s.dt/s.dz*(s.n[1,l]*s.u_z[1,l]-s.n_bottom(s.rr[0,l])*s.u_z_bottom(s.rr[0,l]))
+            #update boundary at j=J (fluid density is zero at the boundary)
+            n_new[j_max,l] = s.n_old[j_max,l] \
+                - 1 / s.rr[j_max,l] * s.dt / s.dr \
+                * (s.rr[j_max,l+1] * s.n[j_max,l+1] * s.u_r[j_max,l+1] - s.rr[j_max,l-1] * s.n[j_max,l-1] * s.u_r[j_max,l-1]) \
+                + s.dt / s.dz * (s.n[j_max-1,l] * s.u_z[j_max-1,l])
+
+        #Finally, update corners
+        n_new[0,0] =  s.n_old[0,0] - 2*s.dt/s.dr*(s.u_r[0,1]*s.n[0,1] - s.u_r[0,0]*s.n[0,0]) \
+                            - s.dt/s.dz*(s.n[1,0]*s.u_z[1,0]-s.n_bottom(s.rr[0,0])*s.u_z_bottom(s.rr[0,0])) #j=0,l=0 (diffuse at l=0 applies to photelectric function as well)
+        n_new[0,1] = s.n_old[0,1] - s.dt/s.dz*(s.n[1,1]*s.u_z[1,1]-s.n_bottom(s.rr[0,1])*s.u_z_bottom(s.rr[0,1])) \
+                                - s.dt/s.dr*(s.rr[0,2]/s.rr[0,1]*s.n[0,2]*s.u_r[0,2]+s.n[0,1]*s.u_r[0,1]-2*s.n[0,0]*s.u_r[0,0])
+                                #- 2*s.dt/s.dr*((s.rr[0,2]*s.n[0,2]*s.u_r[0,2]-s.rr[0,1]*s.n[0,1]*s.u_r[0,1])/(s.rr[0,2]+s.rr[0,1]) + s.n[0,1]*s.u_r[0,1] - s.n[0,0]*s.u_r[0,0])
+                                #- s.dt/s.dr*(s.rr[0,2]*s.n[0,2]*s.u_r[0,2]-s.rr[0,2]*s.n[0,1]*s.u_r[0,1]+2*s.n[0,0]*s.u_r[0,0]-2*s.n[0,1]*s.u_r[0,1])
 
 
-            else:
-                #update r=0 boundary
-                n_new[j,0] = s.n[j,1]
 
-                for l in range(1, l_max - 1): #loop over all interior points in r
-                    n_new[j,l] = s.n_old[j,l] \
-                        - 1 / s.rr[j,l] * s.dt / s.dr \
-                        * (s.rr[j,l+1] * s.n[j,l+1] * s.u_r[j,l+1] - s.rr[j,l-1] * s.n[j,l-1] * s.u_r[j,l-1]) \
-                        - s.dt / s.dz * (s.n[j+1,l] * s.u_z[j+1,l] - s.n[j-1,l] * s.u_z[j-1,l])
+        n_new[0,l_max] = s.n_old[0,l_max] + 1/s.rr[0,l_max]*s.dt/s.dr*(s.rr[0,l_max-1]*s.u_r[0,l_max-1]*s.n[0,l_max-1]) \
+                                - s.dt/s.dz*(s.u_z[1,l_max]*s.n[1,l_max]-s.n_bottom(s.rr[0,l_max])*s.u_z_bottom(s.rr[0,l_max]))#j=0,l=L
 
-                #update r=R boundary
-                n_new[j,l_max-1] = s.n[j,l_max-1]
+        n_new[j_max,0] = s.n_old[j_max,0] \
+            - 2*s.dt/s.dr*(s.u_r[j_max,1]*s.n[j_max,1] - s.u_r[j_max,0]*s.n[j_max,0]) \
+            + s.dt / s.dz * (s.n[j_max-1,0] * s.u_z[j_max-1,0])#j=J,l=0
+        n_new[j_max,1] = s.n_old[j_max,1] \
+            - s.dt/s.dr*(s.rr[j_max,2]/s.rr[j_max,1]*s.n[j_max,2]*s.u_r[j_max,2]+s.n[j_max,1]*s.u_r[j_max,1]-2*s.n[j_max,0]*s.u_r[j_max,0]) \
+            + s.dt / s.dz * (s.n[j_max-1,1] * s.u_z[j_max-1,1])#j=J,l=1
+
+        n_new[j_max,l_max] = s.n_old[j_max,l_max] \
+             + 1/s.rr[j_max,l_max]*s.dt/s.dr*(s.rr[j_max,l_max-1]*s.u_r[j_max,l_max-1]*s.n[j_max,l_max-1])\
+            + s.dt / s.dz * (s.n[j_max-1,l_max] * s.u_z[j_max-1,l_max]) #j=J,l=L
+
 
         s.n_old = s.n.copy()
         s.n = n_new.copy()
@@ -166,7 +198,7 @@ class Prebreakdown:
         dt = []
         for j in range(1,s.rr.shape[0]-1):
             for l in range(1,s.rr.shape[1]-1):
-                dt.append(s.dz / (s.u_z[j,l] ** 2 + s.u_r ** 2))
+                dt.append(1 / (np.sqrt(2)) * (s.dz / (s.u_z[j,l] ** 2 + s.u_r ** 2)))
 
         return np.min(dt)
 
