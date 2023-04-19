@@ -163,11 +163,12 @@ class Prebreakdown:
             n_new[j_max,l] = s.n_old[j_max,l] \
                 - 1 / s.rr[j_max,l] * s.dt / s.dr \
                 * (s.rr[j_max,l+1] * s.n[j_max,l+1] * s.u_r[j_max,l+1] - s.rr[j_max,l-1] * s.n[j_max,l-1] * s.u_r[j_max,l-1]) \
-                + s.dt / s.dz * (s.n[j_max-1,l] * s.u_z[j_max-1,l])
+                - s.dt / s.dz * (s.n[j_max,l]*s.u_z[j_max,l] - s.n[j_max-1,l] * s.u_z[j_max-1,l])
 
         #Finally, update corners
         n_new[0,0] =  s.n_old[0,0] - 2*s.dt/s.dr*(s.u_r[0,1]*s.n[0,1] - s.u_r[0,0]*s.n[0,0]) \
                             - s.dt/s.dz*(s.n[1,0]*s.u_z[1,0]-s.n_bottom(s.rr[0,0])*s.u_z_bottom(s.rr[0,0])) #j=0,l=0 (diffuse at l=0 applies to photelectric function as well)
+
         n_new[0,1] = s.n_old[0,1] - s.dt/s.dz*(s.n[1,1]*s.u_z[1,1]-s.n_bottom(s.rr[0,1])*s.u_z_bottom(s.rr[0,1])) \
                                 - s.dt/s.dr*(s.rr[0,2]/s.rr[0,1]*s.n[0,2]*s.u_r[0,2]+s.n[0,1]*s.u_r[0,1]-2*s.n[0,0]*s.u_r[0,0])
                                 #- 2*s.dt/s.dr*((s.rr[0,2]*s.n[0,2]*s.u_r[0,2]-s.rr[0,1]*s.n[0,1]*s.u_r[0,1])/(s.rr[0,2]+s.rr[0,1]) + s.n[0,1]*s.u_r[0,1] - s.n[0,0]*s.u_r[0,0])
@@ -176,14 +177,14 @@ class Prebreakdown:
 
 
         n_new[0,l_max] = s.n_old[0,l_max] + 1/s.rr[0,l_max]*s.dt/s.dr*(s.rr[0,l_max-1]*s.u_r[0,l_max-1]*s.n[0,l_max-1]) \
-                                - s.dt/s.dz*(s.u_z[1,l_max]*s.n[1,l_max]-s.n_bottom(s.rr[0,l_max])*s.u_z_bottom(s.rr[0,l_max]))#j=0,l=L
+                                - s.dt/s.dz*(s.u_z[1,l_max]*s.n[1,l_max]-s.n_bottom(s.rr[0,l_max])*s.u_z_bottom(s.rr[0,l_max])) #j=0,l=L
 
         n_new[j_max,0] = s.n_old[j_max,0] \
             - 2*s.dt/s.dr*(s.u_r[j_max,1]*s.n[j_max,1] - s.u_r[j_max,0]*s.n[j_max,0]) \
-            + s.dt / s.dz * (s.n[j_max-1,0] * s.u_z[j_max-1,0])#j=J,l=0
+            - s.dt / s.dz * (s.n[j_max,0]*s.u_z[j_max,0] - s.n[j_max-1,0] * s.u_z[j_max-1,0])#j=J,l=0
         n_new[j_max,1] = s.n_old[j_max,1] \
             - s.dt/s.dr*(s.rr[j_max,2]/s.rr[j_max,1]*s.n[j_max,2]*s.u_r[j_max,2]+s.n[j_max,1]*s.u_r[j_max,1]-2*s.n[j_max,0]*s.u_r[j_max,0]) \
-            + s.dt / s.dz * (s.n[j_max-1,1] * s.u_z[j_max-1,1])#j=J,l=1
+            - s.dt / s.dz * (s.n[j_max,1]*s.u_z[j_max,1] - s.n[j_max-1,1] * s.u_z[j_max-1,1])#j=J,l=1
 
         n_new[j_max,l_max] = s.n_old[j_max,l_max] \
              + 1/s.rr[j_max,l_max]*s.dt/s.dr*(s.rr[j_max,l_max-1]*s.u_r[j_max,l_max-1]*s.n[j_max,l_max-1])\
@@ -198,7 +199,7 @@ class Prebreakdown:
         dt = []
         for j in range(1,s.rr.shape[0]-1):
             for l in range(1,s.rr.shape[1]-1):
-                dt.append(1 / (np.sqrt(2)) * (s.dz / (s.u_z[j,l] ** 2 + s.u_r ** 2)))
+                dt.append(1 / (np.sqrt(2)) * (s.dz / (s.u_z[j,l] ** 2 + s.u_r[j,l] ** 2)))
 
         return np.min(dt)
 
