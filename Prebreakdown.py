@@ -36,7 +36,7 @@ class Prebreakdown:
         s.u_r = np.zeros(s.rr.shape) #electron velocity density in r
         s.u_z = np.zeros(s.rr.shape) #electron velocity density in z
 
-        s.n_old = s.n; s.u_r_old = s.u_r; s.u_z_old = s.u_z #old densities for leapfrog method.
+        s.n_old = s.n.copy(); s.u_r_old = s.u_r.copy(); s.u_z_old = s.u_z.copy() #old densities for leapfrog method.
         s.nu = nu #neutral collision frequency
         s.dt = dt #time step
 
@@ -129,77 +129,42 @@ class Prebreakdown:
         #see derivation notes
         j_max = s.rr.shape[0] - 1
         l_max = s.rr.shape[0] - 1
-        n_new = s.n.copy()
-
-        #Begin by looping over all interior points
-        for j in range(1, j_max - 1): #loop over j (z)
-            for l in range(2, l_max - 1): #loop over l (r)
-                n_new[j,l] = s.n_old[j,l] \
-                    - 1 / s.rr[j,l] * s.dt / s.dr \
-                    * (s.rr[j,l+1] * s.n[j,l+1] * s.u_r[j,l+1] - s.rr[j,l-1] * s.n[j,l-1] * s.u_r[j,l-1]) \
-                    - s.dt / s.dz * (s.n[j+1,l] * s.u_z[j+1,l] - s.n[j-1,l] * s.u_z[j-1,l])
-
-        #Now, update boundaries
-        #First, take care of boundaries at l=0 and l=L
-        for j in range(1, j_max):
-            #update boundary at l=0 (von Neumann-0 by symmetry)
-            n_new[j,0] = s.n_old[j,0] - s.dt/s.dz*(s.n[j+1,0]*s.u_z[j+1,0]-s.n[j-1,0]*s.u_z[j-1,0]) \
-                            - 2*s.dt/s.dr*(s.n[j,1]*s.u_r[j,1]-s.n[j,0]*s.u_r[j,0])
-            #update boundary at l=1, which is also effected by l=0
-            n_new[j,1] = s.n_old[j,1] - s.dt/s.dz*(s.n[j+1,1]*s.u_z[j+1,1]-s.n[j-1,1]*s.u_z[j-1,1]) \
-                            - s.dt/s.dr*(s.rr[j,2]/s.rr[j,1]*s.n[j,2]*s.u_r[j,2]+s.n[j,1]*s.u_r[j,1]-2*s.n[j,0]*s.u_r[j,0])
-                            #- 2*s.dt/s.dr*((s.rr[j,2]*s.n[j,2]*s.u_r[j,2]-s.rr[j,1]*s.n[j,1]*s.u_r[j,1])/(s.rr[j,2]+s.rr[j,1]) + s.n[j,1]*s.u_r[j,1] - s.n[j,0]*s.u_r[j,0])
-                            #- s.dt/s.dr*(s.rr[j,2]*s.n[j,2]*s.u_r[j,2]-s.rr[j,2]*s.n[j,1]*s.u_r[j,1]+2*s.n[j,0]*s.u_r[j,0]-2*s.n[j,1]*s.u_r[j,1])
-            #update boundary at l=L (von Neumann-0 due to diffuse condition)
-            n_new[j,l_max] = s.n_old[j,l_max] + 1/s.rr[j,l_max]*s.dt/s.dr*(s.rr[j,l_max-1]*s.u_r[j,l_max-1]*s.n[j,l_max-1]) \
-                                    - s.dt/s.dz*(s.u_z[j+1,l_max]*s.n[j+1,l_max]-s.u_z[j-1,l_max]*s.n[j-1,l_max])
-
-        #Next, do the boundaries at j=0 and j=j_max
-        for l in range(1,l_max):
-            #update boundary at j=0 (set by photoelectric effect)
-            n_new[0,l] = s.n_old[0,l] - 1/s.rr[0,l]*s.dt/s.dr*(s.rr[0,l+1]*s.n[0,l+1]*s.u_r[0,l+1]-s.rr[0,l-1]*s.n[0,l-1]*s.u_r[0,l-1]) \
-                                - s.dt/s.dz*(s.n[1,l]*s.u_z[1,l]-s.n_bottom(s.rr[0,l])*s.u_z_bottom(s.rr[0,l]))
-            #update boundary at j=J (fluid density is zero at the boundary)
-            n_new[j_max,l] = s.n_old[j_max,l] \
-                - 1 / s.rr[j_max,l] * s.dt / s.dr \
-                * (s.rr[j_max,l+1] * s.n[j_max,l+1] * s.u_r[j_max,l+1] - s.rr[j_max,l-1] * s.n[j_max,l-1] * s.u_r[j_max,l-1]) \
-                - s.dt / s.dz * (s.n[j_max,l]*s.u_z[j_max,l] - s.n[j_max-1,l] * s.u_z[j_max-1,l])
-
-        #Finally, update corners
-        n_new[0,0] =  s.n_old[0,0] - 2*s.dt/s.dr*(s.u_r[0,1]*s.n[0,1] - s.u_r[0,0]*s.n[0,0]) \
-                            - s.dt/s.dz*(s.n[1,0]*s.u_z[1,0]-s.n_bottom(s.rr[0,0])*s.u_z_bottom(s.rr[0,0])) #j=0,l=0 (diffuse at l=0 applies to photelectric function as well)
-
-        n_new[0,1] = s.n_old[0,1] - s.dt/s.dz*(s.n[1,1]*s.u_z[1,1]-s.n_bottom(s.rr[0,1])*s.u_z_bottom(s.rr[0,1])) \
-                                - s.dt/s.dr*(s.rr[0,2]/s.rr[0,1]*s.n[0,2]*s.u_r[0,2]+s.n[0,1]*s.u_r[0,1]-2*s.n[0,0]*s.u_r[0,0])
-                                #- 2*s.dt/s.dr*((s.rr[0,2]*s.n[0,2]*s.u_r[0,2]-s.rr[0,1]*s.n[0,1]*s.u_r[0,1])/(s.rr[0,2]+s.rr[0,1]) + s.n[0,1]*s.u_r[0,1] - s.n[0,0]*s.u_r[0,0])
-                                #- s.dt/s.dr*(s.rr[0,2]*s.n[0,2]*s.u_r[0,2]-s.rr[0,2]*s.n[0,1]*s.u_r[0,1]+2*s.n[0,0]*s.u_r[0,0]-2*s.n[0,1]*s.u_r[0,1])
+        n_new = np.empty(s.rr.shape)
 
 
+        for l in range(0,l_max): #loop over all l values because we do not need to worry about the l boundaries yet
+            #Update boundary at j=0 using boundary values of n_bottom and u_z_bottom
+            #set by photoelectric effect
+            n_new[0,l] = s.n_old[0,l] - s.dt/(2*s.dz)*(s.n[1,l]*s.u_z[1,l]-s.n_bottom(s.rr[0,l])*s.u_z_bottom(s.rr[0,l]))
 
-        n_new[0,l_max] = s.n_old[0,l_max] + 1/s.rr[0,l_max]*s.dt/s.dr*(s.rr[0,l_max-1]*s.u_r[0,l_max-1]*s.n[0,l_max-1]) \
-                                - s.dt/s.dz*(s.u_z[1,l_max]*s.n[1,l_max]-s.n_bottom(s.rr[0,l_max])*s.u_z_bottom(s.rr[0,l_max])) #j=0,l=L
-
-        n_new[j_max,0] = s.n_old[j_max,0] \
-            - 2*s.dt/s.dr*(s.u_r[j_max,1]*s.n[j_max,1] - s.u_r[j_max,0]*s.n[j_max,0]) \
-            - s.dt / s.dz * (s.n[j_max,0]*s.u_z[j_max,0] - s.n[j_max-1,0] * s.u_z[j_max-1,0])#j=J,l=0
-        n_new[j_max,1] = s.n_old[j_max,1] \
-            - s.dt/s.dr*(s.rr[j_max,2]/s.rr[j_max,1]*s.n[j_max,2]*s.u_r[j_max,2]+s.n[j_max,1]*s.u_r[j_max,1]-2*s.n[j_max,0]*s.u_r[j_max,0]) \
-            - s.dt / s.dz * (s.n[j_max,1]*s.u_z[j_max,1] - s.n[j_max-1,1] * s.u_z[j_max-1,1])#j=J,l=1
-
-        n_new[j_max,l_max] = s.n_old[j_max,l_max] \
-             + 1/s.rr[j_max,l_max]*s.dt/s.dr*(s.rr[j_max,l_max-1]*s.u_r[j_max,l_max-1]*s.n[j_max,l_max-1])\
-            + s.dt / s.dz * (s.n[j_max-1,l_max] * s.u_z[j_max-1,l_max]) #j=J,l=L
-
+            for j in range(1, j_max): #loop over all interior points
+                n_new[j,l] = s.n_old[j,l] - s.dt/s.dz*(s.n[j+1,l]*s.u_z[j+1,l] - s.n[j-1,l]*s.u_z[j-1,l])
+            #Update boundary at j=J which is diffuse
+            n_new[j_max,l] = s.n[j_max-1,l]
 
         s.n_old = s.n.copy()
         s.n = n_new.copy()
 
+        for j in range(0,j_max): #loop over all j values because we do not need to worry about j boundaries in this sweep
+            #update boundaty at r=0 (effects l=0 and l=1)
+            n_new[j,0] = s.n_old[j,0] - 2*s.dt/(2*s.dr)*(s.n[j,1]*s.u_r[j,1]-s.n[0,1]*s.u_r[j,0])
+            n_new[j,1] = s.n_old[j,1] - s.dt/(2*s.dr)*(s.rr[j,2]/s.rr[j,1]*s.n[j,2]*s.u_r[j,2] + s.n[j,1]*s.u_r[j,1] - 2*s.n[j,1]*s.u_r[j,0])
+
+            for l in range(1,l_max): #update interior points
+                n_new[j,l] = s.n_old[j,l] - 1/s.rr[j,l]*s.dt/s.dr*(s.rr[j,l+1]*s.n[j,l+1]*s.u_r[j,l+1]-s.rr[j,l-1]*s.n[j,l-1]*s.u_r[j,l-1])
+
+            #update diffuse boundary at l=L
+            n_new[j,l_max] = s.n[j,l_max-1]
+
+        #s.n_old = s.n.copy()
+        #s.n = n_new.copy()
+
 
     def cont_dt_lim(s):
         dt = []
-        for j in range(1,s.rr.shape[0]-1):
-            for l in range(1,s.rr.shape[1]-1):
-                dt.append(1 / (np.sqrt(2)) * (s.dz / (s.u_z[j,l] ** 2 + s.u_r[j,l] ** 2)))
+        for j in range(0,s.rr.shape[0]):
+            for l in range(0,s.rr.shape[1]):
+                dt.append(1 / (2*np.sqrt(2)) * 1/(s.u_z/s.dz + s.u_r/s.dr))
 
         return np.min(dt)
 
