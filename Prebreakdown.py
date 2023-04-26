@@ -131,40 +131,66 @@ class Prebreakdown:
         l_max = s.rr.shape[0] - 1
         n_new = np.empty(s.rr.shape)
 
+        #Upate interior points
+        for j in range(1,j_max):
+            for l in range(1,l_max):
+                n_new[j,l] = s.n_old[j,l] - s.dt/s.dz*(s.n[j+1,l]*s.u_z[j+1,l]-s.n[j-1,l]*s.u_z[j-1,l]) \
+                                - 4*s.dt/(s.rr[j,l+1]**2-s.rr[j,l-1]**2)*(s.rr[j,l+1]*s.n[j,l+1]*s.u_r[j,l+1]-s.rr[j,l-1]*s.n[j,l-1]*s.u_r[j,l-1])
 
-        for l in range(0,l_max): #loop over all l values because we do not need to worry about the l boundaries yet
-            #Update boundary at j=0 using boundary values of n_bottom and u_z_bottom
-            #set by photoelectric effect
-            n_new[0,l] = s.n_old[0,l] - s.dt/(2*s.dz)*(s.n[1,l]*s.u_z[1,l]-s.n_bottom(s.rr[0,l])*s.u_z_bottom(s.rr[0,l]))
+        #Update boundaries at j=0 and j=J
+        for l in range(1,l_max):
+            #boundary at j=0 (set by n_0 and u_z_0 photoelectric effect)
+            n_new[0,l] = s.n_old[0,l] - s.dt/s.dz*(s.n[1,l]*s.u_z[1,l]-s.n_bottom(s.rr[0,l])*s.u_z_bottom(s.rr[0,l])) \
+                                    - 4*s.dt/(s.rr[0,l+1]**2-s.rr[0,l-1]**2)*(s.rr[0,l+1]*s.n[0,l+1]*s.u_r[0,l+1]-s.rr[0,l-1]*s.n[0,l-1]*s.u_r[0,l-1])
+            #boundary condition at j=J (diffuse)
+            n_new[j_max,l] = s.n[j_max-1,l] \
+                            - 4*s.dt/(s.rr[j_max,l+1]**2-s.rr[j_max,l-1]**2)*(s.rr[j_max,l+1]*s.n[j_max,l+1]*s.u_r[j_max,l+1]-s.rr[j_max,l-1]*s.n[j_max,l-1]*s.u_r[j_max,l-1])
 
-            for j in range(1, j_max): #loop over all interior points
-                n_new[j,l] = s.n_old[j,l] - s.dt/s.dz*(s.n[j+1,l]*s.u_z[j+1,l] - s.n[j-1,l]*s.u_z[j-1,l])
-            #Update boundary at j=J which is diffuse
-            n_new[j_max,l] = s.n[j_max-1,l]
+        #Update boundaries at l=0 and l=L
+        for j in range(1,j_max):
+            #boundary at l=0
+             n_new[j,0] = s.n_old[j,0] - s.dt/s.dz*(s.n[j+1,0]*s.u_z[j+1,0]-s.n[j-1,0]*s.u_z[j-1,0]) \
+                            - 4*s.dt/s.rr[j,1]*s.n[j,1]*s.u_r[j,1]
+
+
+
+            #boundary at l_max (diffuse)
+             n_new[j,l_max] = s.n[j,l_max-1] - s.dt/s.dz*(s.n[j+1,l]*s.u_z[j+1,l]-s.n[j-1,l]*s.u_z[j-1,l])
+        #boundaries at corners, which we will treat as a combination of two boundary conditions
+        n_new[0,0] = s.n_old[0,0] - s.dt/s.dz*(s.n[1,0]*s.u_z[1,0]-s.n_bottom(s.rr[0,0])*s.u_z_bottom(s.rr[0,0])) \
+                        - 4*s.dt/s.rr[0,1]*s.n[0,1]*s.u_r[0,1]
+
+        n_new[j_max,0] = s.n[j_max-1,0] - 4*s.dt/s.rr[j_max,1]*s.n[j_max,1]*s.u_r[j_max,1]
+
+        n_new[0,l_max] = s.n[0,l_max-1] - s.dt/s.dz*(s.n[1,l_max]*s.u_z[1,l_max]-s.n_bottom(s.rr[0,l_max])*s.u_z_bottom(s.rr[0,l_max]))
+
+        n_new[j_max,l_max] = s.n[j_max-1,l_max-1]
 
         s.n_old = s.n.copy()
         s.n = n_new.copy()
 
-        for j in range(0,j_max): #loop over all j values because we do not need to worry about j boundaries in this sweep
-            #update boundaty at r=0 (effects l=0 and l=1)
-            n_new[j,0] = s.n_old[j,0] - 2*s.dt/(2*s.dr)*(s.n[j,1]*s.u_r[j,1]-s.n[0,1]*s.u_r[j,0])
-            n_new[j,1] = s.n_old[j,1] - s.dt/(2*s.dr)*(s.rr[j,2]/s.rr[j,1]*s.n[j,2]*s.u_r[j,2] + s.n[j,1]*s.u_r[j,1] - 2*s.n[j,1]*s.u_r[j,0])
-
-            for l in range(1,l_max): #update interior points
-                n_new[j,l] = s.n_old[j,l] - 1/s.rr[j,l]*s.dt/s.dr*(s.rr[j,l+1]*s.n[j,l+1]*s.u_r[j,l+1]-s.rr[j,l-1]*s.n[j,l-1]*s.u_r[j,l-1])
-
-            #update diffuse boundary at l=L
-            n_new[j,l_max] = s.n[j,l_max-1]
-
-        #s.n_old = s.n.copy()
-        #s.n = n_new.copy()
-
-
     def cont_dt_lim(s):
         dt = []
-        for j in range(0,s.rr.shape[0]):
-            for l in range(0,s.rr.shape[1]):
-                dt.append(1 / (2*np.sqrt(2)) * 1/(s.u_z/s.dz + s.u_r/s.dr))
+        for j in range(1,s.rr.shape[0]-1):
+            for l in range(1,s.rr.shape[1]-1):
+                v_z = np.abs(s.u_z[j+1,l] - s.u_z[j-1,l])
+                v_r = np.abs(4/(s.rr[j,l+1]**2-s.rr[j,l-1]**2)*(s.rr[j,l+1]*s.u_r[j,l+1]-s.rr[j,l-1]*s.u_r[j,l-1]))
+
+                dt.append(1 / (2*np.sqrt(2)) * 1/(v_z/s.dz + v_r/s.dr))
+
+        for l in range(1,s.rr.shape[1]-1):
+            v_r = np.abs(4/(s.rr[0,l+1]**2-s.rr[0,l-1]**2)*(s.rr[0,l+1]*s.u_r[0,l+1]-s.rr[0,l-1]*s.u_r[0,l-1]))
+            v_z = np.abs(s.u_z[1,l] - s.u_z_bottom(s.rr[0,l]))
+            dt.append(1 / (2*np.sqrt(2)) * 1/(v_z/s.dz + v_r/s.dr))
+
+        for j in range(1,s.rr.shape[0]-1):
+            v_z = np.abs(s.u_z[j+1,0] - s.u_z[j-1,0])
+            v_r = np.abs(4*s.u_r[j,1]/s.rr[j,1])
+            dt.append(1 / (2*np.sqrt(2)) * 1/(v_z/s.dz + v_r/s.dr))
+
+        v_z = np.abs(s.u_z[1,0] - s.u_z_bottom(s.rr[0,0]))
+        v_r = np.abs(4*s.u_r[0,1]/s.rr[0,1])
+        dt.append(1 / (2*np.sqrt(2)) * 1/(v_z/s.dz + v_r/s.dr))
 
         return np.min(dt)
 
