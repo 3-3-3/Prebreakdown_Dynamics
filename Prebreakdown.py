@@ -68,58 +68,73 @@ class Prebreakdown:
 
         s.n_bottom = n_bottom
         s.u_z_bottom = u_z_bottom
+        s.V_bottom = V_bottom
 
     def fluid(s):
-        #solve fluid equation with operator splitting
-        #(most of these should be able to be combined)
-        #(but makes thinking about stability conditions easier)
-        dt_p = s.dt / 4
-        u_r_new = s.u_r
-        u_z_new = s.u_z
+        j_max = s.rr.shape[0] - 1
+        l_max = s.rr.shape[0] - 1
+        u_r_new = np.empty(s.rr.shape)
+        u_z_new = np.empty(s.rr.shape)
 
-        #first quarter step (field terms)
-        for j in range(1,j_max): #loop over all j, excluding boundaries
-            for l in range(1,l_max): #loop over all l, excluding boundaries
-                u_r_new[j,l] = s.u_r_old[j,l] - s.e_c/s.m_e * dt_p/s.dr * (s.V[j,l+1] - s.V[j,l-1])
-                u_z_new[j,l] = s.u_z_old[j,l] - s.e_c/s.m_e * dt_p/s.dz * (s.V[j+1,l] - s.V[j-1,l])
-
-        s.u_r_old = s.u_r
-        s.u_z_old = s.u_z
-        s.u_r = u_r_new
-        s.u_z = u_z_new
-
-        #second quarter step (friction terms)
+        #update interior points
         for j in range(1,j_max):
             for l in range(1,l_max):
-                u_r_new[j,l] = s.u_r_old[j,l] - 2*s.nu*s.u_r[j,l]*dt_p
-                u_z_new[j,l] = s.u_z_old[j,l] - 2*s.nu*s.u_z[j,l]*dt_p
+                #update interior points
+                u_r_new[j,l] = s.u_r_old[j,l] - s.u_r[j,l]*s.dt/s.dr*(s.u_r[j,l+1]-s.u_r[j,l-1]) - s.u_z[j,l]*s.dt/s.dz*(s.u_r[j+1,l]-s.u_r[j-1,l]) \
+                                                    - 2*s.dt*s.nu*s.u_r[j,l] - s.e_c/s.m_e * s.dt/s.dr*(s.V[j,l+1]-s.V[j,l-1])
 
-        s.u_r_old = s.u_r
-        s.u_z_old = s.u_z
-        s.u_r = u_r_new
-        s.u_z = u_z_new
+                u_z_new[j,l] = s.u_z_old[j,l] - s.u_z[j,l]*s.dt/s.dz*(s.u_z[j+1,l]-s.u_z[j-1,l]) - s.u_r[j,l]*s.dt/s.dr*(s.u_z[j,l+1]-s.u_z[j,l-1]) \
+                                                    - 2*s.dt*s.nu*s.u_z[j,l] - s.e_c/s.m_e * s.dt/s.dr*(s.V[j+1,l]-s.V[j-1,l])
 
-        #third quarter step (uncoupled convective terms)
+
+        for l in range(1,l_max):
+            #update boundaries in z
+            #First, take update boundary at z=0
+            #Where u is set at the boundary
+            u_r_new[0,l] = s.u_r_old[0,l] - s.u_r[0,l]*s.dt/s.dr*(s.u_r[0,l+1]-s.u_r[0,l-1]) - s.u_z[0,l]*s.dt/s.dz*(s.u_r[1,l]) \
+                            - 2*s.dt*s.nu*s.u_r[0,l] - s.e_c/s.m_e * s.dt/s.dr*(s.V[0,l+1]-s.V[0,l-1])
+
+            u_z_new[0,l] = s.u_z_old[0,l] - s.u_z[0,l]*s.dt/s.dz*(s.u_z[1,l]-s.u_z_bottom()) - s.u_r[0,l]*s.dt/s.dr*(s.u_z[0,l+1]-s.u_z[0,l-1]) \
+                                                - 2*s.dt*s.nu*s.u_z[0,l] - s.e_c/s.m_e * s.dt/s.dr*(s.V[1,l]-s.V_bottom(s.rr[0,l]))
+
+            #diffuse boundary at z=1
+            u_r_new[j_max,l] = s.u_r[j_max-1,l]-s.u_r[j_max,l]*s.dt/s.dr*(s.u_r[j_max,l+1]-s.u_r[j_max,l-1])-2*s.nu*s.u_r[j_max,l]-s.e/s.m_e*s.dt/s.dr*(s.V[j_max,l+1]-s.V[j_max,l-1])
+            u_z_new[j_max,l] = s.u_z[j_max-1,l]-s.u_z[j_max,l]*s.dt/s.dr*(s.u_z[j_max,l+1]-s.u_z[j_max,l-1])-2*s.nu*s.u_r[j_max,l]
+
         for j in range(1,j_max):
-            for l in range(1,l_max):
-                u_r_new[j,l] = s.u_r_old[j,l] - s.u_r[j,l]*dt_p/s.dr*(s.u_r[j,l+1] - s.u_r[j,l-1])
-                u_z_new[j,l] = s.u_z_old[j,l] - s.u_r[j,l]*dt_p/s.dz*(s.u_z[j+1,l] - s.u_z[j+1,l])
+            #update boundaries in r
+            #first, at r=0 (axisymmetric)
+            u_r_new[j,0] = s.u_r_old[j,l]-s.u_z[j,0]*s.dt/s.dz*(s.u_r[j+1,0]-s.u_r[j-1,l])-2*s.nu*s.u_r[j,0]
+            u_z_new[j,0] = s.u_z_old[j,l]-s.u_z[j,0]*s.dt/s.dz*(s.u_z[j+1,0]-s.u_z[j-1,0])-2*s.nu*s.u_z[j,0] \
+                                s.e/s.m_e*s.dt/s.dr*(s.V[j+1,0]-s.V[j-1,0])
 
-        s.u_r_old = s.u_r
-        s.u_z_old = s.u_z
-        s.u_r = u_r_new
-        s.u_z = u_z_new
+            #and the boundary at l=l_max
+            u_r_new[j,l_max] = s.u_r[j,l_max-1]-s.u_z[j,l_max]*s.dt/s.dz*(s.u_r[j+1,l_max]-s.u_r[j-1,l_max])-2*s.nu*s.u_r[j,l]
+            u_z_new[j,l_max] = s.u_z[j,l_max-1]-s.z[j,l_max]*(s.u_z[j+1,l_max]-s.u_z[j-1,l_max])-2*s.nu*s.u_z[j,l_max]-s.e/s.m_e*(s.V[j+1,l_max]-s.V[j-1,l_max])
 
-        #fourth quarter step (coupled convective terms)
-        for j in range(1,j_max):
-            for l in range(1,l_max):
-                u_r_new[j,l] = s.u_r_old[j,l] - s.u_z[j,l]*dt_p/s.dz*(s.u_z[j+1,l]-s.u_z[j-1,l])
-                u_z_new[j,l] = s.u_z_old[j,l] - s.u_r[j,l]*dt_p/s.dr*(s.u_r[j,l+1]-s.u_r[j,l-1])
+        #finally, deal with the corners
+        #where BC are mixed
+        #at j=0 and l=0 we have:
+        u_r_new[0,0] = s.u_r_old[0,0] - s.u_z[0,0]*s.dt/s.dr*(s.u_r[1,0]) - 2*s.dt*s.nu*s.u_r[0,0]
+        u_z_new[0,0] = s.u_z_old[0,0] - s.u_z[0,0]*s.dt/s.dr*(s.u_z[1,0]-s.u_z_bottom(s.rr[0,0])) - 2*s.nu*s.u_z[0,0] - s.e/s.m_e*s.dt/s.dr*(s.V[1,0]-s.V_bottom(s.rr[0,0]))6
 
-        s.u_r_old = s.u_r
-        s.u_z_old = s.u_z
-        s.u_r = u_r_new
-        s.u_z = u_z_new
+        #at j=j_max and l=l_max we have:
+        u_r_new[j_max,l_max] = s.u_r[j_max-1,l_max-1] - 2*s.nu*s.u_r[j_max,l_max]
+        u_z_new[j_max,l_max] = s.u_z[j_max-1,l_max-1] - 2*s.nu*s.u_r[j_max,l_max]
+
+        #at j=j_max and l=0
+        u_r_new[j_max,0] = s.u_r[j_max-1,0] - 2*s.nu*s.u_r[j,0]
+        u_z_new[j_max,0] = s.u_z[j_max-1,0] - 2*s.nu*s.u_z[j,0]
+
+        #and finally, at j=0 and l=l_max
+        u_r_new[0,l_max] = s.u_r[0,l_max-1] - s.u_z[0,l_max]*s.dt/s.dz*(s.u_r[1,l_max]) - 2*s.nu*s.u_r[0,l_max]
+        u_z_new[0,l_max] = s.u_z[0,l_max-1] - u_z[0,l_max]*s.dt/s.dz*(s.u_z[1,l_max] - s.u_z_bottom(s.rr[0,l_max])) - 2*s.nu*s.u_z[0,l_max] \
+                                - s.e/s.m_e*s.dt/s.dr*(s.V[1,l_max]-s.V_bottom(s.rr[0,l_max]))
+
+        s.u_r_old = s.u_r.copy()
+        s.u_z_old = s.u_z.copy()
+        s.u_r = u_r_new.copy()
+        s.u_z = u_z_new.copy()
 
 
 
@@ -154,7 +169,7 @@ class Prebreakdown:
 
 
 
-            #boundary at l_max (diffuse)
+             #boundary at l_max (diffuse)
              n_new[j,l_max] = s.n[j,l_max-1] - s.dt/s.dz*(s.n[j+1,l]*s.u_z[j+1,l]-s.n[j-1,l]*s.u_z[j-1,l])
         #boundaries at corners, which we will treat as a combination of two boundary conditions
         n_new[0,0] = s.n_old[0,0] - s.dt/s.dz*(s.n[1,0]*s.u_z[1,0]-s.n_bottom(s.rr[0,0])*s.u_z_bottom(s.rr[0,0])) \
