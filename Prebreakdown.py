@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import cm
 from scipy.special import jv, besselpoly, jn_zeros
 import scipy.constants as pc
 import os
@@ -70,13 +71,36 @@ class Prebreakdown:
         s.u_z_bottom = u_z_bottom
         s.V_bottom = V_bottom
 
+
+        s.save_dir = save_dir
+
+    def step(s,update_dt=True,save=True):
+        #Begin by choosing a stable dt for the step
+        #going to try just using the continuity limit; if that doesn't work, will try some ideas for fluid limit
+        if update_dt:
+            s.dt = np.min([s.cont_dt_lim(),s.fluid_r_lim(),s.fluid_z_lim()])
+        print(f'[*] dt limited to: {s.dt}')
+        #next, resolve the potential
+        print('[*] Resolving potential')
+        s.sor(0.97)
+        #then, update u_r and u_z
+        print('[*] Solving fluid equation')
+        s.fluid()
+        #and finally, update n
+        print('[*] Solving continuity equation')
+        s.continuity()
+        #update SOR source term
+        s.f = s.e_c/pc.epsilon_0*s.dr*s.dz*s.n
+
+        if save:
+            s.save()
+
     def fluid(s):
         j_max = s.rr.shape[0] - 1
         l_max = s.rr.shape[0] - 1
         u_r_new = np.empty(s.rr.shape)
         u_z_new = np.empty(s.rr.shape)
 
-        #update interior points
         for j in range(1,j_max):
             for l in range(1,l_max):
                 #update interior points
@@ -84,12 +108,12 @@ class Prebreakdown:
                                                     - 2*s.dt*s.nu*s.u_r[j,l] - s.e_c/s.m_e * s.dt/s.dr*(s.V[j,l+1]-s.V[j,l-1])
 
                 u_z_new[j,l] = s.u_z_old[j,l] - s.u_z[j,l]*s.dt/s.dz*(s.u_z[j+1,l]-s.u_z[j-1,l]) - s.u_r[j,l]*s.dt/s.dr*(s.u_z[j,l+1]-s.u_z[j,l-1]) \
-                                                    - 2*s.dt*s.nu*s.u_z[j,l] - s.e_c/s.m_e * s.dt/s.dr*(s.V[j+1,l]-s.V[j-1,l])
+                                                    - 2*s.dt*s.nu*s.u_z[j,l] - s.e_c/s.m_e * s.dt/s.dz*(s.V[j+1,l]-s.V[j-1,l])
 
 
         for l in range(1,l_max):
             #update boundaries in z
-            #First, take update boundary at z=0
+            #First, update boundary at z=0
             #Where u is set at the boundary
             u_r_new[0,l] = s.u_r_old[0,l] - s.u_r[0,l]*s.dt/s.dr*(s.u_r[0,l+1]-s.u_r[0,l-1]) - s.u_z[0,l]*s.dt/s.dz*(s.u_r[1,l]) \
                             - 2*s.dt*s.nu*s.u_r[0,l] - s.e_c/s.m_e * s.dt/s.dr*(s.V[0,l+1]-s.V[0,l-1])
@@ -98,25 +122,25 @@ class Prebreakdown:
                                                 - 2*s.dt*s.nu*s.u_z[0,l] - s.e_c/s.m_e * s.dt/s.dr*(s.V[1,l]-s.V_bottom(s.rr[0,l]))
 
             #diffuse boundary at z=1
-            u_r_new[j_max,l] = s.u_r[j_max-1,l]-s.u_r[j_max,l]*s.dt/s.dr*(s.u_r[j_max,l+1]-s.u_r[j_max,l-1])-2*s.nu*s.u_r[j_max,l]-s.e/s.m_e*s.dt/s.dr*(s.V[j_max,l+1]-s.V[j_max,l-1])
+            u_r_new[j_max,l] = s.u_r[j_max-1,l]-s.u_r[j_max,l]*s.dt/s.dr*(s.u_r[j_max,l+1]-s.u_r[j_max,l-1])-2*s.nu*s.u_r[j_max,l]-s.e_c/s.m_e*s.dt/s.dr*(s.V[j_max,l+1]-s.V[j_max,l-1])
             u_z_new[j_max,l] = s.u_z[j_max-1,l]-s.u_z[j_max,l]*s.dt/s.dr*(s.u_z[j_max,l+1]-s.u_z[j_max,l-1])-2*s.nu*s.u_r[j_max,l]
 
         for j in range(1,j_max):
             #update boundaries in r
             #first, at r=0 (axisymmetric)
-            u_r_new[j,0] = s.u_r_old[j,l]-s.u_z[j,0]*s.dt/s.dz*(s.u_r[j+1,0]-s.u_r[j-1,l])-2*s.nu*s.u_r[j,0]
-            u_z_new[j,0] = s.u_z_old[j,l]-s.u_z[j,0]*s.dt/s.dz*(s.u_z[j+1,0]-s.u_z[j-1,0])-2*s.nu*s.u_z[j,0] \
-                                s.e/s.m_e*s.dt/s.dr*(s.V[j+1,0]-s.V[j-1,0])
+            u_r_new[j,0] = s.u_r_old[j,0]-s.u_z[j,0]*s.dt/s.dz*(s.u_r[j+1,0]-s.u_r[j-1,l])-2*s.nu*s.u_r[j,0]
+            u_z_new[j,0] = s.u_z_old[j,0]-s.u_z[j,0]*s.dt/s.dz*(s.u_z[j+1,0]-s.u_z[j-1,0])-2*s.nu*s.u_z[j,0] \
+                            -s.e_c/s.m_e*s.dt/s.dr*(s.V[j+1,0]-s.V[j-1,0])
 
             #and the boundary at l=l_max
             u_r_new[j,l_max] = s.u_r[j,l_max-1]-s.u_z[j,l_max]*s.dt/s.dz*(s.u_r[j+1,l_max]-s.u_r[j-1,l_max])-2*s.nu*s.u_r[j,l]
-            u_z_new[j,l_max] = s.u_z[j,l_max-1]-s.z[j,l_max]*(s.u_z[j+1,l_max]-s.u_z[j-1,l_max])-2*s.nu*s.u_z[j,l_max]-s.e/s.m_e*(s.V[j+1,l_max]-s.V[j-1,l_max])
+            u_z_new[j,l_max] = s.u_z[j,l_max-1]-s.u_z[j,l_max]*s.dt/s.dz*(s.u_z[j+1,l_max]-s.u_z[j-1,l_max])-2*s.nu*s.u_z[j,l_max]-s.e_c/s.m_e*s.dt/s.dr*(s.V[j+1,l_max]-s.V[j-1,l_max])
 
         #finally, deal with the corners
         #where BC are mixed
         #at j=0 and l=0 we have:
         u_r_new[0,0] = s.u_r_old[0,0] - s.u_z[0,0]*s.dt/s.dr*(s.u_r[1,0]) - 2*s.dt*s.nu*s.u_r[0,0]
-        u_z_new[0,0] = s.u_z_old[0,0] - s.u_z[0,0]*s.dt/s.dr*(s.u_z[1,0]-s.u_z_bottom(s.rr[0,0])) - 2*s.nu*s.u_z[0,0] - s.e/s.m_e*s.dt/s.dr*(s.V[1,0]-s.V_bottom(s.rr[0,0]))6
+        u_z_new[0,0] = s.u_z_old[0,0] - s.u_z[0,0]*s.dt/s.dr*(s.u_z[1,0]-s.u_z_bottom(s.rr[0,0])) - 2*s.nu*s.u_z[0,0] - s.e_c/s.m_e*s.dt/s.dr*(s.V[1,0]-s.V_bottom(s.rr[0,0]))
 
         #at j=j_max and l=l_max we have:
         u_r_new[j_max,l_max] = s.u_r[j_max-1,l_max-1] - 2*s.nu*s.u_r[j_max,l_max]
@@ -128,8 +152,7 @@ class Prebreakdown:
 
         #and finally, at j=0 and l=l_max
         u_r_new[0,l_max] = s.u_r[0,l_max-1] - s.u_z[0,l_max]*s.dt/s.dz*(s.u_r[1,l_max]) - 2*s.nu*s.u_r[0,l_max]
-        u_z_new[0,l_max] = s.u_z[0,l_max-1] - u_z[0,l_max]*s.dt/s.dz*(s.u_z[1,l_max] - s.u_z_bottom(s.rr[0,l_max])) - 2*s.nu*s.u_z[0,l_max] \
-                                - s.e/s.m_e*s.dt/s.dr*(s.V[1,l_max]-s.V_bottom(s.rr[0,l_max]))
+        u_z_new[0,l_max] = s.u_z[0,l_max-1] - s.u_z[0,l_max]*s.dt/s.dz*(s.u_z[1,l_max] - s.u_z_bottom(s.rr[0,l_max])) - 2*s.nu*s.u_z[0,l_max] - s.e_c/s.m_e*s.dt/s.dr*(s.V[1,l_max]-s.V_bottom(s.rr[0,l_max]))
 
         s.u_r_old = s.u_r.copy()
         s.u_z_old = s.u_z.copy()
@@ -210,20 +233,22 @@ class Prebreakdown:
         return np.min(dt)
 
     def fluid_r_lim(s):
-        dt = []
+        dt = np.empty((s.rr.shape[0]-1,s.rr.shape[1]-1))
         for j in range(1,s.rr.shape[0]-1):
             for l in range(1,s.rr.shape[1]-1):
-                dt.append(s.dr / (2 * s.u_r[j,l]))
+                dt[j,l] = 1/(np.abs(1/s.dr*(s.u_r[j,l]*(s.u_r[j,l+1]-s.u_r[j,l-1])) + np.abs(1/s.dr*s.u_z[j,l]*(s.u_r[j+1,l]-s.u_r[j-1,l])) + np.abs(s.e_c/s.m_e*1/s.dr*(s.V[j,l+1]-s.V[j,l-1]))))
 
-        return 4*np.min(dt)
+        return np.min(dt)
 
     def fluid_z_lim(s):
-        dt = []
-        for j in range(1,r.shape[0]-1):
-            for l in range(1,r.shape[1]-1):
-                dt.append(s.dz / (2 * s.u_z[j,l]))
+        dt = np.empty((s.rr.shape[0]-1,s.rr.shape[1]-1))
+        for j in range(1,s.rr.shape[0]-1):
+            for l in range(1,s.rr.shape[1]-1):
+                dt[j,l] = 1/(np.abs(s.u_r[j,l]*1/s.dr*(s.u_z[j,l+1]-s.u_z[j,l-1])) + np.abs(s.u_z[j,l]*1/s.dz*(s.u_z[j+1,l]-s.u_z[j-1,l])) + np.abs(s.e_c/s.m_e*1/s.dz*(s.V[j+1,l]-s.V[j-1,l])))
 
-        return 4*np.min(dt)
+        return np.min(dt)
+
+
 
     def sor(s, sp_r, iterations=1000, EPS=1e-10):
         #successive overrelaxation
@@ -292,41 +317,62 @@ class Prebreakdown:
         print(f'Error reduced by factor of {anorm} in {iter} iterations')
         return False
 
-    def step(s,save=True):
-        #Begin by choosing a stable dt for the step
-        s.dt = np.min(s.cont_dt_lim(), s.fluid_r_lim(), s.fluid_z_lim())
-        #next, resolve the potential
-        print('[*] Resolving potential')
+    def initialize(s):
+        #first, we solve for the initial potential
         s.sor(0.97)
-        #then, update u_r and u_z
-        print('[*] Solving fluid equation')
-        s.fluid()
-        #and finally, update n
-        print('[*] Solving continuity equation')
-        s.continuity()
+        #next, we relax to a steady state solution for the fluid equation given this initial potential
 
-        if save:
-            s.save()
+        for _ in range(1000):
+            s.dt = np.min([s.fluid_r_lim(),s.fluid_z_lim()])
+            s.fluid()
 
     def save(s,verbose=True):
-        dir = join(save_dir, f'at_{s.time}')
+        dir = join(s.save_dir, f'at_{s.time}')
         if verbose:
             print(f'[**] Saving in {dir}')
 
         try:
-            os.mmkdir(dir)
+            os.mkdir(dir)
         except FileExistsError:
             pass
 
-        np.save(join(dir,'V.npy'),s.V)
-        np.save(join(dir,'n.npy'),s.n)
-        np.save(join(dir,'u_r.npy'),s.u_r)
-        np.save(join(dir,'u_z.npy'),s.u_z)
+        np.save(join(dir,f'V_{s.time}.npy'),s.V)
+        np.save(join(dir,f'n_{s.time}.npy'),s.n)
+        np.save(join(dir,f'u_r_{s.time}.npy'),s.u_r)
+        np.save(join(dir,f'u_z_{s.time}.npy'),s.u_z)
 
-    def viz_V(s):
-        fig, ax = plt.subplots(subplot_kw={"projection" : "3d"})
+    def u_r_surface_plot(s):
+        fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+        ax.plot_surface(s.rr, s.zz, s.u_r, cmap=cm.bone,linewidth=0, antialiased=False)
         ax.set_xlabel('r')
         ax.set_ylabel('z')
-        ax.set_zlabel('Potential')
-        ax.plot_surface(s.rr,s.zz,s.V,cmap=cm.bone,linewidth=0,antialiased=False)
+        ax.set_zlabel(r'$u_r$')
+
+        plt.show()
+
+    def u_z_surface_plot(s):
+        fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+        ax.plot_surface(s.rr, s.zz, s.u_z, cmap=cm.bone,linewidth=0, antialiased=False)
+        ax.set_xlabel('r')
+        ax.set_ylabel('z')
+        ax.set_zlabel(r'$u_z$')
+
+        plt.show()
+
+    def V_surface_plot(s):
+        fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+        ax.plot_surface(s.rr, s.zz, s.V, cmap=cm.bone,linewidth=0, antialiased=False)
+        ax.set_xlabel('r')
+        ax.set_ylabel('z')
+        ax.set_zlabel(r'V')
+
+        plt.show()
+
+    def n_surface_plot(s):
+        fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+        ax.plot_surface(s.rr, s.zz, s.n, cmap=cm.bone,linewidth=0, antialiased=False)
+        ax.set_xlabel('r')
+        ax.set_ylabel('z')
+        ax.set_zlabel(r'n')
+
         plt.show()
