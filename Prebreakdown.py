@@ -207,6 +207,31 @@ class Prebreakdown:
         s.n_old = s.n.copy()
         s.n = n_new.copy()
 
+    def E_r(s):
+        e_r = np.zeros(s.rr.shape)
+        for j in range(1,s.rr.shape[0]-1):
+            for l in range(1,s.rr.shape[1]-1):
+                e_r[j,l] = -(s.V[j,l+1] - s.V[j,l-1])
+
+        return e_r
+
+    def E_z(s):
+        e_z = np.zeros(s.rr.shape)
+        for j in range(1,s.rr.shape[0]-1):
+            for l in range(1,s.rr.shape[1]-1):
+                e_z[j,l] = -(s.V[j+1,l] - s.V[j-1,l])
+
+        return e_z
+
+    def E_mag(s):
+        return np.sqrt(s.E_r()**2 + s.E_z()**2)
+
+    def general_cfl(s):
+        return np.min([
+                        np.min(1/(np.sqrt((s.u_z/s.dz)**2 + (s.u_r/s.dr)**2 + (s.e_c/s.m_e*s.E_mag())**2))),
+                        np.min(s.dz/s.u_z_bottom(s.rr))
+                        ])
+
     def cont_dt_lim(s):
         dt = []
         for j in range(1,s.rr.shape[0]-1):
@@ -375,4 +400,10 @@ class Prebreakdown:
         ax.set_ylabel('z')
         ax.set_zlabel(r'n')
 
+        plt.show()
+
+    def e_field_plot(s):
+        plt.quiver(s.rr,s.zz,s.e_field_r(),s.e_field_z())
+        plt.xlabel('r')
+        plt.ylabel('z')
         plt.show()
