@@ -13,7 +13,7 @@ class Prebreakdown:
                     V_top=lambda r : 0, V_bottom=lambda r : 0,
                     V_r=lambda z : 0, n_bottom=lambda r : 0,
                     u_z_bottom=lambda r : 0,
-                    save_dir='/'):
+                    save_dir=''):
         '''
         r_min (usually 0): Minimum radial value in domain
         r_max: Maximum radial value in domain
@@ -73,13 +73,19 @@ class Prebreakdown:
 
 
         s.save_dir = save_dir
+        try:
+            os.mkdir(s.save_dir)
+        except FileExistsError:
+            pass
 
     def step(s,update_dt=True,save=True):
         #Begin by choosing a stable dt for the step
         #going to try just using the continuity limit; if that doesn't work, will try some ideas for fluid limit
         if update_dt:
-            s.dt = np.min([s.cont_dt_lim(),s.fluid_r_lim(),s.fluid_z_lim()])
-        print(f'[*] dt limited to: {s.dt}')
+            s.dt = s.general_cfl()
+
+        s.time += s.dt
+        print(f'[*] dt limited to: {s.dt} and time from start {s.time}')
         #next, resolve the potential
         print('[*] Resolving potential')
         s.sor(0.97)
@@ -232,49 +238,6 @@ class Prebreakdown:
                         np.min(s.dz/s.u_z_bottom(s.rr))
                         ])
 
-    def cont_dt_lim(s):
-        dt = []
-        for j in range(1,s.rr.shape[0]-1):
-            for l in range(1,s.rr.shape[1]-1):
-                v_z = np.abs(s.u_z[j+1,l] - s.u_z[j-1,l])
-                v_r = np.abs(4/(s.rr[j,l+1]**2-s.rr[j,l-1]**2)*(s.rr[j,l+1]*s.u_r[j,l+1]-s.rr[j,l-1]*s.u_r[j,l-1]))
-
-                dt.append(1 / (2*np.sqrt(2)) * 1/(v_z/s.dz + v_r/s.dr))
-
-        for l in range(1,s.rr.shape[1]-1):
-            v_r = np.abs(4/(s.rr[0,l+1]**2-s.rr[0,l-1]**2)*(s.rr[0,l+1]*s.u_r[0,l+1]-s.rr[0,l-1]*s.u_r[0,l-1]))
-            v_z = np.abs(s.u_z[1,l] - s.u_z_bottom(s.rr[0,l]))
-            dt.append(1 / (2*np.sqrt(2)) * 1/(v_z/s.dz + v_r/s.dr))
-
-        for j in range(1,s.rr.shape[0]-1):
-            v_z = np.abs(s.u_z[j+1,0] - s.u_z[j-1,0])
-            v_r = np.abs(4*s.u_r[j,1]/s.rr[j,1])
-            dt.append(1 / (2*np.sqrt(2)) * 1/(v_z/s.dz + v_r/s.dr))
-
-        v_z = np.abs(s.u_z[1,0] - s.u_z_bottom(s.rr[0,0]))
-        v_r = np.abs(4*s.u_r[0,1]/s.rr[0,1])
-        dt.append(1 / (2*np.sqrt(2)) * 1/(v_z/s.dz + v_r/s.dr))
-
-        return np.min(dt)
-
-    def fluid_r_lim(s):
-        dt = np.empty((s.rr.shape[0]-1,s.rr.shape[1]-1))
-        for j in range(1,s.rr.shape[0]-1):
-            for l in range(1,s.rr.shape[1]-1):
-                dt[j,l] = 1/(np.abs(1/s.dr*(s.u_r[j,l]*(s.u_r[j,l+1]-s.u_r[j,l-1])) + np.abs(1/s.dr*s.u_z[j,l]*(s.u_r[j+1,l]-s.u_r[j-1,l])) + np.abs(s.e_c/s.m_e*1/s.dr*(s.V[j,l+1]-s.V[j,l-1]))))
-
-        return np.min(dt)
-
-    def fluid_z_lim(s):
-        dt = np.empty((s.rr.shape[0]-1,s.rr.shape[1]-1))
-        for j in range(1,s.rr.shape[0]-1):
-            for l in range(1,s.rr.shape[1]-1):
-                dt[j,l] = 1/(np.abs(s.u_r[j,l]*1/s.dr*(s.u_z[j,l+1]-s.u_z[j,l-1])) + np.abs(s.u_z[j,l]*1/s.dz*(s.u_z[j+1,l]-s.u_z[j-1,l])) + np.abs(s.e_c/s.m_e*1/s.dz*(s.V[j+1,l]-s.V[j-1,l])))
-
-        return np.min(dt)
-
-
-
     def sor(s, sp_r, iterations=1000, EPS=1e-10):
         #successive overrelaxation
         #see e.g. Numerical Recipes Chapter 20
@@ -352,7 +315,7 @@ class Prebreakdown:
             s.fluid()
 
     def save(s,verbose=True):
-        dir = join(s.save_dir, f'at_{s.time}')
+        dir = join(s.save_dir, f'time_{s.time}_s')
         if verbose:
             print(f'[**] Saving in {dir}')
 
@@ -361,10 +324,10 @@ class Prebreakdown:
         except FileExistsError:
             pass
 
-        np.save(join(dir,f'V_{s.time}.npy'),s.V)
-        np.save(join(dir,f'n_{s.time}.npy'),s.n)
-        np.save(join(dir,f'u_r_{s.time}.npy'),s.u_r)
-        np.save(join(dir,f'u_z_{s.time}.npy'),s.u_z)
+        np.save(join(dir,f'V.npy'),s.V)
+        np.save(join(dir,f'n.npy'),s.n)
+        np.save(join(dir,f'u_r.npy'),s.u_r)
+        np.save(join(dir,f'u_z.npy'),s.u_z)
 
     def u_r_surface_plot(s):
         fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
@@ -407,3 +370,17 @@ class Prebreakdown:
         plt.xlabel('r')
         plt.ylabel('z')
         plt.show()
+
+def extract_t(dir_name):
+    return float(f[5:-2])
+
+def n_surface_plot_ani(dir,r,z):
+    subs = os.list_dir(dir)
+    size = len(subs)
+
+    t = np.empty(size)
+    n = np.empty((size,*r.shape))
+
+    for i in range(len(subs)):
+        t[i] = extract_t(subs[i])
+        n[i,:,:] = np.load(os.path.join(subs[i],'n.py'))
