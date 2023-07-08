@@ -54,6 +54,9 @@ class Prebreakdown:
         s.m_e = pc.m_e
         s.nu = 0 #friction coefficient
 
+        s.diffusion = 0 #Electron diffusion coefficient
+        s.mobility = 0 #Electron mobility 
+
 
         #***set Dirichlet boundary conditions***
         #first, set in r
@@ -115,6 +118,9 @@ class Prebreakdown:
 
                 u_z_new[j,l] = s.u_z_old[j,l] - s.u_z[j,l]*s.dt/s.dz*(s.u_z[j+1,l]-s.u_z[j-1,l]) - s.u_r[j,l]*s.dt/s.dr*(s.u_z[j,l+1]-s.u_z[j,l-1]) \
                                                     - 2*s.dt*s.nu*s.u_z[j,l] - s.e_c/s.m_e * s.dt/s.dz*(s.V[j+1,l]-s.V[j-1,l])
+
+    def drift_difusion(s):
+
 
 
         for l in range(1,l_max):
@@ -199,7 +205,7 @@ class Prebreakdown:
 
 
              #boundary at l_max (diffuse)
-             n_new[j,l_max] = s.n[j,l_max-1] - s.dt/s.dz*(s.n[j+1,l]*s.u_z[j+1,l]-s.n[j-1,l]*s.u_z[j-1,l])
+             n_new[j,l_max] = s.n[j,l_max-1] - s.dt/s.dz*(s.n[j+1,l_max]*s.u_z[j+1,l_max]-s.n[j-1,l_max]*s.u_z[j-1,l_max])
         #boundaries at corners, which we will treat as a combination of two boundary conditions
         n_new[0,0] = s.n_old[0,0] - s.dt/s.dz*(s.n[1,0]*s.u_z[1,0]-s.n_bottom(s.rr[0,0])*s.u_z_bottom(s.rr[0,0])) \
                         - 4*s.dt/s.rr[0,1]*s.n[0,1]*s.u_r[0,1]
