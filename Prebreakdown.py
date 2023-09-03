@@ -1,17 +1,20 @@
 #AUTHOR: Liam Keeley, Colorado College
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib import cm
-from matplotlib.animation import FuncAnimation
+from matplotlib import cm, ticker
+import matplotlib.animation as animation
 from scipy.special import j0, jn_zeros
 import scipy.constants as pc
+
+
 import os
-from os.path import join
+import time
+import string
 
 
 
 class Prebreakdown:
-    def __init__(s, N_z, N_r, Dz, Dr, nu=0, diffusion=0, mobility=0,
+    def __init__(s, N_z, N_r, Dz, Dr, dt=1e-15, nu=0, diffusion=0, mobility=0,
                     V_top=lambda r, t : 0, V_bottom=lambda r, t : 0,
                     V_r=lambda z, t : 0, n_bottom=lambda r, t : 0,
                     u_z_bottom=lambda r, t: 0, save_dir='out'):
@@ -73,6 +76,7 @@ class Prebreakdown:
         V_max: function describing boundary at r=r_max for potential
         '''
         s.time = 0
+        s.times = []
         s.dz = Dz; s.dr = Dr
         s.N_z = N_z; s.N_r = N_r
         s.z_max = s.dz * s.N_z; s.r_max = s.dr * N_r
@@ -84,7 +88,7 @@ class Prebreakdown:
         s.n = np.zeros(s.rr.shape); s.n_old = np.zeros(s.rr.shape)
         s.u_r = np.zeros(s.rr.shape); s.u_r_old = np.zeros(s.rr.shape)
         s.u_z = np.zeros(s.zz.shape); s.u_z_old = np.zeros(s.zz.shape)
-        s.dt = 0
+        s.dt = dt
 
         #finite difference coefficients for solving Poisson's equation with sor
         #see derivation notes
@@ -131,8 +135,9 @@ class Prebreakdown:
             pass
 
         s.E_max = []
+        s.iter = 0
 
-    def step(s, save=True, method='Drift-Diffusion', verbose='True'):
+    def step(s, method='Drift-Diffusion', iterations=1000, sp_r=0.97, EPS=1e-10, save=True, verbose=True, save_every=10):
         '''
         Take a step, updating the time step dt, electric potential, and electron density. Use either a Drift-Diffusion prescription or Fluid model.
 
@@ -140,14 +145,18 @@ class Prebreakdown:
         method: which method to use for updating dt and the elctron density: one of 'Drift-Diffusion' or 'Fluid'.
 
         '''
+        t = time.time()
+
+        s.iter += 1
         s.f = s.e_c/pc.epsilon_0*s.dr*s.dz*s.n
-        s.sor(0.97)
+        s.sor(sp_r, iterations=iterations, EPS=EPS)
         s.resolve_E_fld()
         s.E_max.append(s.E_mag().max())
 
         if method == 'Drift-Diffusion':
             s.dt = s.drift_diffusion_cfl()
             s.time += s.dt
+            s.times.append(s.time)
 
             if verbose:
                 print(f'Time step limited to: {s.dt} at time {s.time}')
@@ -155,30 +164,100 @@ class Prebreakdown:
             #update the electron density at the cathode
             for i in range(s.rr[0,:].size):
                 s.n[1,i] = s.n_bottom(s.rr[1,i], s.time)
-
-            print('[*] Solving drift-diffusion equation')
+            if verbose:
+                print('[*] Solving drift-diffusion equation')
             s.drift_diffusion()
 
         elif method == 'Fluid':
-            s.dt = s.fluid_cfl()
-            s.time += s.dt
-
-            if verbose:
-                print(f'Time step limited to: {s.dt} at time {s.time}')
-
             #update the electron density at the cathode
             for i in range(s.rr[0,:].size):
                 s.n[1,i] = s.n_bottom(s.rr[1,i], s.time)
                 s.u_z[0,i] = s.u_z_bottom(s.rr[0,i], s.time)
+                s.u_r[0,i] = 0
+
+            s.fluid()
+            target_dt = s.fluid_cfl() / 5
+            ratio = target_dt / s.dt
+            if verbose:
+                print(f'Old dt: {s.dt}, ratio: {ratio}')
+
+            if ratio < 1.1:
+                s.dt = target_dt
+            else:
+                s.dt = 1.05*s.dt
+
+            #s.dt = s.fluid_cfl()
+            s.time += s.dt
+            s.times.append(s.time)
+
+            if verbose:
+                print(f'Time step limited to: {s.dt}')
 
             #resolve fluid velocity and update electron density using continuity equation
-            s.fluid()
             s.continuity()
 
-        if save:
-            s.save()
+        if save and (s.iter % save_every == 0):
+            s.save(verbose=verbose)
+
+        if verbose:
+            print(f'Step took: {time.time() - t}')
+
+    def constant_dt_step(s, dt, method='Drift-Diffusion', iterations=1000, sp_r=0.97, EPS=1e-10, save=True, verbose=True, save_every=10):
+        '''
+        Take a step with a given time step dt and update electric potential, and electron density. Use either a Drift-Diffusion prescription or Fluid model.
+
+        save: whether or not to save the output.
+        method: which method to use for updating dt and the elctron density: one of 'Drift-Diffusion' or 'Fluid'.
+
+        '''
+        t = time.time()
+        for i in range(s.rr[0,:].size):
+            s.n[1,i] = s.n_bottom(s.rr[1,i], s.time)
+            s.u_z[0,i] = s.u_z_bottom(s.rr[0,i], s.time)
+            s.u_r[0,i] = 0
+
+        s.iter += 1
+        s.f = s.e_c/pc.epsilon_0*s.dr*s.dz*s.n
+        s.sor(sp_r, iterations=iterations, EPS=EPS)
+        s.resolve_E_fld()
+        s.E_max.append(s.E_mag().max())
+
+        if method == 'Drift-Diffusion':
+            s.dt = dt
+            s.time += s.dt
+            s.times.append(s.time)
 
 
+            #update the electron density at the cathode
+            for i in range(s.rr[0,:].size):
+                s.n[1,i] = s.n_bottom(s.rr[1,i], s.time)
+
+            if verbose:
+                print('[*] Solving drift-diffusion equation')
+
+            s.drift_diffusion()
+
+        elif method == 'Fluid':
+            #update the electron density at the cathode
+            s.fluid()
+            s.dt = dt
+            s.time += s.dt
+            s.times.append(s.time)
+
+            cfl = s.fluid_cfl()
+            if dt > cfl:
+                print(f'WARNING: time step is {s.dt}, but cfl step is: {cfl}. Time step is unstable!')
+
+
+
+            #resolve fluid velocity and update electron density using continuity equation
+            s.continuity()
+
+        if save and (s.iter % save_every == 0):
+            s.save(verbose=verbose)
+
+        if verbose:
+            print(f'Step took: {time.time() - t}')
 
 
     def drift_diffusion(s):
@@ -227,7 +306,7 @@ class Prebreakdown:
         '''
         j_max = s.rr.shape[0] - 1
         l_max = s.rr.shape[0] - 1
-        n_new = np.empty(s.rr.shape)
+        n_new = np.copy(s.n)
 
         #Upate interior points
         for j in range(2,j_max-1):
@@ -238,7 +317,7 @@ class Prebreakdown:
         #Update boundaries at j=J-1
         for l in range(1,l_max):
             #boundary condition at j=J-1 (diffuse)
-            n_new[j_max,l] = s.n[j_max-2,l] \
+            n_new[j_max-1,l] = s.n[j_max-2,l] \
                             - 4*s.dt/(s.rr[j_max-1,l+1]**2-s.rr[j_max-1,l-1]**2)*(s.rr[j_max-1,l+1]*s.n[j_max-1,l+1]*s.u_r[j_max-1,l+1]-s.rr[j_max-1,l-1]*s.n[j_max-1,l-1]*s.u_r[j_max-1,l-1])
 
         #Update boundaries at l=0 and l=L
@@ -266,10 +345,10 @@ class Prebreakdown:
         '''
         j_max = s.rr.shape[0] - 1
         l_max = s.rr.shape[0] - 1
-        u_r_new = np.empty(s.rr.shape)
-        u_z_new = np.empty(s.rr.shape)
+        u_r_new = np.copy(s.u_r)
+        u_z_new = np.copy(s.u_z)
 
-        for j in range(1,j_max-1):
+        for j in range(1,j_max):
             for l in range(1,l_max):
                 #update interior points
                 u_r_new[j,l] = s.u_r_old[j,l] - 2*s.e_c/s.m_e*s.E_fld[1][j,l]*s.dt - s.u_r[j,l]*(s.u_r[j,l+1]-s.u_r[j,l-1])/s.dr*s.dt \
@@ -284,13 +363,13 @@ class Prebreakdown:
             #Where u is set at the boundary
             #diffuse boundary at z=1
             u_r_new[j_max,l] = s.u_r[j_max-1,l]-2*s.e_c/s.m_e*s.E_fld[0][j_max,l]*s.dt-s.u_r[j_max,l]*(s.u_r[j_max,l+1]-s.u_r[j_max,l-1])/s.dr*s.dt-2*s.nu*s.u_r[j_max,l]*s.dt
-            u_z_new[j_max,l] = s.u_z[j_max-1,l]-s.u_z[j_max,l]*(s.u_z[j_max,l+1]-s.u_z[j_max,l-1])/s.dr*s.dt-2*s.nu*s.u_r[j_max,l]*s.dt
+            u_z_new[j_max,l] = s.u_z[j_max-1,l] - s.u_z[j_max,l] * (s.u_z[j_max,l+1] - s.u_z[j_max,l-1])/s.dr*s.dt - 2*s.nu*s.u_r[j_max,l]*s.dt
 
         for j in range(1,j_max):
             #update boundaries in r
             #first, at r=0 (axisymmetric)
-            u_r_new[j,0] = s.u_r_old[j,0]-s.u_z[j,0]*(s.u_r[j+1,0]-s.u_r[j-1,0])/s.dz*s.dt-2*s.nu*s.u_r[j,0]*s.dt
-            u_z_new[j,0] = s.u_z_old[j,0]-2*s.e_c/s.m_e*s.E_fld[1][j,0]*s.dt-s.u_z[j,0]*(s.u_z[j+1,0]-s.u_z[j-1,0])*s.dt-2*s.nu*s.u_z[j,0]*s.dt
+            u_r_new[j,0] = s.u_r_old[j,0] - s.u_z[j,0]*(s.u_r[j+1,0]-s.u_r[j-1,0])/s.dz*s.dt - 2*s.nu*s.u_r[j,0]*s.dt
+            u_z_new[j,0] = s.u_z_old[j,0] - 2*s.e_c/s.m_e*s.E_fld[0][j,0]*s.dt - s.u_z[j,0]*(s.u_z[j+1,0]-s.u_z[j-1,0])/s.dz*s.dt - 2*s.nu*s.u_z[j,0]*s.dt
 
             #and the boundary at l=l_max
             u_r_new[j,l_max] = s.u_r[j,l_max-1]-s.u_z[j,l_max]*(s.u_r[j+1,l_max]-s.u_r[j-1,l_max])/s.dz*s.dt-2*s.nu*s.u_r[j,l]*s.dt
@@ -388,7 +467,7 @@ class Prebreakdown:
         '''
         for j in range(1,s.rr.shape[0]-1):
             for l in range(1,s.rr.shape[1]-1):
-                s.E_fld[1][j,l] = (s.V[j,l+1] - s.V[j,l-1]) / (2 * s.dr)
+                s.E_fld[1][j,l] = -(s.V[j,l+1] - s.V[j,l-1]) / (2 * s.dr)
 
         s.E_fld[1][:,0] = 0 #By symmetry, the electric field in r is 0 at r=0
 
@@ -398,7 +477,7 @@ class Prebreakdown:
         '''
         for j in range(1,s.rr.shape[0]-1):
             for l in range(0,s.rr.shape[1]-1):
-                s.E_fld[0][j,l] = (s.V[j+1,l] - s.V[j-1,l]) / (2*s.dz)
+                s.E_fld[0][j,l] = -(s.V[j+1,l] - s.V[j-1,l]) / (2*s.dz)
 
     def resolve_E_fld(s):
         '''
@@ -421,12 +500,27 @@ class Prebreakdown:
         Apply the cfl condition to get a stable time step for the fluid model.
         '''
         return np.min([
-                        np.min(np.float64(1)/(np.sqrt((s.u_z/s.dz)**2 + (s.u_r/s.dr)**2 + (s.e_c/s.m_e*s.E_mag())**2))),
+                        np.min(np.float64(1)/(np.sqrt((s.u_z/s.dz)**2 + (s.u_r/s.dr)**2))),
                         np.min(np.float64(s.dz)/s.u_z_bottom(s.rr,s.time))
                         ]) #cast numerators as np.float64 to avoid division by zero error
 
+    def initialize(s):
+        s.sor(0.97,iterations=10000,EPS=1e-12)
+
+        s.dt = 1e-15
+
+        s.resolve_E_fld()
+
+        for i in range(s.rr[0,:].size):
+            s.n[1,i] = s.n_bottom(s.rr[1,i], s.time)
+            s.u_z[0,i] = s.u_z_bottom(s.rr[0,i], s.time)
+            s.u_r[0,i] = 0
+
+        s.fluid()
+        s.fluid()
+
     def save(s,verbose=True):
-        dir = join(s.save_dir, f'time_{s.time}_s')
+        dir = os.path.join(s.save_dir, f'time_{s.time}_s')
         if verbose:
             print(f'[**] Saving in {dir}')
 
@@ -435,8 +529,14 @@ class Prebreakdown:
         except FileExistsError:
             pass
 
-        np.save(join(dir,f'V.npy'),s.V)
-        np.save(join(dir,f'n.npy'),s.n)
+        np.save(os.path.join(dir,'V.npy'),s.V)
+        np.save(os.path.join(dir,'E_z.npy'),s.E_fld[0])
+        np.save(os.path.join(dir,'E_r.npy'),s.E_fld[1])
+        np.save(os.path.join(dir,'u_z.npy'),s.u_z)
+        np.save(os.path.join(dir,'u_r.npy'),s.u_r)
+        np.save(os.path.join(dir,'n.npy'),s.n)
+        np.save(os.path.join(dir,'rr.npy'),s.rr)
+        np.save(os.path.join(dir,'zz.npy'),s.zz)
 
     def V_surface_plot(s):
         fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
@@ -449,13 +549,14 @@ class Prebreakdown:
 
     def V_contour_plot(s):
         fig, ax = plt.subplots()
-        ax.contour(s.rr,s.zz,s.V,cmap=cm.bone)
+        ax.contour(s.rr,s.zz,s.V,levels=50,cmap=cm.bone)
 
         plt.show()
 
     def n_contour_plot(s):
         fig,ax = plt.subplots()
-        ax.contourf(s.rr,s.zz,s.V)
+        ax.contourf(s.rr,s.zz,s.n)
+        fig.show()
 
     def n_surface_plot(s):
         fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
@@ -475,8 +576,15 @@ class Prebreakdown:
 
         plt.show()
 
-    def e_field_plot(s):
+    def E_fld_plot(s):
         plt.quiver(s.zz,s.rr,*s.E_fld)
+        plt.xlabel('z')
+        plt.ylabel('r')
+        plt.title('Electric Field')
+        plt.show()
+
+    def u_plot(s):
+        plt.quiver(s.zz,s.rr,s.u_z,s.u_r)
         plt.xlabel('z')
         plt.ylabel('r')
         plt.show()
@@ -488,10 +596,98 @@ def bessel_boundary(V_0,r_max):
     analytical solution of Laplace's equation in cylindrical coordinates
     '''
     alpha = jn_zeros(0,1)[0]
-    return lambda r, t : V_0 * j0(alpha * r / r_max)
+    return lambda r, t : V_0 * j0(alpha * r / r_max) if r <= r_max else 0
 
 def step_boundary(amp, r_max):
     '''
     A boundary which suddenly goes to zero at r_max. Can be used for either the potential or the electron number density.
     '''
     return lambda r, t : amp if r <= r_max else 0
+
+def gaussian_boundary(power, std):
+    return lambda r, t : power / (np.sqrt(2*np.pi)*std) * np.exp(-1/2*(r/std)**2)
+
+
+def get_time_from_dir_name(dir_name):
+    return float(dir_name.strip('_./' + string.ascii_letters))
+
+def dir_name_from_time(time):
+    return f'time_{time}_s'
+
+def n_contour_plot(fig, ax, rr, zz, n):
+    n_plot = np.ma.masked_where(n <= 0, n)
+    cf = ax.contourf(rr,zz,n_plot,locator=ticker.LogLocator())
+    return fig, ax, cf
+
+def grid(fig, ax, rr, zz):
+    ax.scatter(rr,zz,marker='.',s=1,color='lightgrey')
+
+def u_quiver_plot(fig, ax, rr, zz, u_r, u_z, n=None):
+    if n is None:
+        u_r_plot = np.copy(u_r)
+        u_z_plot = np.copy(u_z)
+
+    else:
+        u_r_plot = np.ma.masked_where(n <= 0, u_r)
+        u_z_plot = np.ma.masked_where(n <= 0, u_z)
+
+    ax.quiver(rr,zz,u_r_plot,u_z_plot)
+    return fig, ax
+
+def n_u_plot(fig, ax, rr, zz, n, u_r, u_z):
+    grid(fig,ax,rr,zz)
+    n_contour_plot(fig,ax,rr,zz,n)
+    u_quiver_plot(fig,ax,rr,zz,u_r,u_z,n=n)
+
+    return fig, ax
+
+def n_u_animation(times, base, interval=1, save=False):
+    fig, ax = plt.subplots()
+    target = os.path.join(base,dir_name_from_time(times[0]))
+
+    rr = np.load(os.path.join(target,'rr.npy'))
+    zz = np.load(os.path.join(target,'zz.npy'))
+
+    n = np.load(os.path.join(target,'n.npy'))
+    u_r = np.load(os.path.join(target,'u_r.npy'))
+    u_z = np.load(os.path.join(target,'u_z.npy'))
+
+    cont = ax.contourf(rr, zz, n)
+    cbar = fig.colorbar(cont)
+
+    u_r_plot = np.ma.masked_where(n == 0, u_r)
+    u_z_plot = np.ma.masked_where(n == 0, u_z)
+
+    quiv = ax.quiver(rr,zz,u_r_plot,u_z_plot)
+
+    ax.set_xlabel(r'$r$ (m)')
+    ax.set_ylabel(r'$z$ (m)')
+
+    def ani_func(time, base, ax, fig, rr, zz):
+        nonlocal quiv, cont, cbar
+        for c in cont.collections:
+            c.remove()
+        quiv.remove()
+        cbar.remove()
+
+        #load data at time step
+        target = os.path.join(base,dir_name_from_time(time))
+        n = np.load(os.path.join(target,'n.npy'))
+        u_r = np.load(os.path.join(target,'u_r.npy'))
+        u_z = np.load(os.path.join(target,'u_z.npy'))
+
+
+        cont = ax.contourf(rr, zz, n, levels=20)
+        cbar = fig.colorbar(cont)
+
+        u_r_plot = np.ma.masked_where(n == 0, u_r)
+        u_z_plot = np.ma.masked_where(n == 0, u_z)
+
+        quiv = ax.quiver(rr,zz,u_r_plot,u_z_plot)
+        ax.set_title(f'Time: {time}')
+
+    ani = animation.FuncAnimation(fig, ani_func, frames=times, fargs=(base, ax, fig, rr, zz), blit=False, interval=interval,repeat=False)
+    if save:
+        writergif = animation.PillowWriter(fps=30)
+        ani.save(os.path.join(base,'animation.gif'),writer=writergif)
+    plt.show()
