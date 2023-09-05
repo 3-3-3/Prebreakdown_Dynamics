@@ -5,6 +5,7 @@ from matplotlib import cm, ticker
 import matplotlib.animation as animation
 from scipy.special import j0, jn_zeros
 import scipy.constants as pc
+from scipy.ndimage import gaussian_filter
 
 
 import os
@@ -137,7 +138,7 @@ class Prebreakdown:
         s.E_max = []
         s.iter = 0
 
-    def step(s, method='Drift-Diffusion', iterations=1000, sp_r=0.97, EPS=1e-10, save=True, verbose=True, save_every=10):
+    def step(s, method='Drift-Diffusion', smooth=False, iterations=1000, sp_r=0.97, EPS=1e-10, save=True, verbose=True, save_every=10):
         '''
         Take a step, updating the time step dt, electric potential, and electron density. Use either a Drift-Diffusion prescription or Fluid model.
 
@@ -176,25 +177,34 @@ class Prebreakdown:
                 s.u_r[0,i] = 0
 
             s.fluid()
-            target_dt = s.fluid_cfl() / 5
+            target_dt = s.fluid_cfl()
+            print(f'target_dt: {target_dt}')
             ratio = target_dt / s.dt
             if verbose:
                 print(f'Old dt: {s.dt}, ratio: {ratio}')
 
-            if ratio < 1.1:
-                s.dt = target_dt
-            else:
-                s.dt = 1.05*s.dt
+            if ratio < 1.1025 and ratio > 0.9025:
+                s.dt = np.sqrt(ratio) * s.dt
+            elif ratio >= 1.025:
+                s.dt = 1.05 * s.dt
+                print(s.dt)
+            elif ratio <= 0.9025:
+                s.dt = 0.95 * s.dt
 
             #s.dt = s.fluid_cfl()
             s.time += s.dt
             s.times.append(s.time)
 
             if verbose:
-                print(f'Time step limited to: {s.dt}')
+                print(f'Time step limited to: {s.dt} at time: {s.time}')
 
             #resolve fluid velocity and update electron density using continuity equation
             s.continuity()
+
+        if smooth:
+            s.n = gaussian_filter(s.n,sigma=[2*s.dr,2*s.dz])
+            s.u_r = gaussian_filter(s.u_r,sigma=[2*s.dr,2*s.dz])
+            s.u_z = gaussian_filter(s.u_z,sigma=[2*s.dr,2*s.dz])
 
         if save and (s.iter % save_every == 0):
             s.save(verbose=verbose)
@@ -502,7 +512,7 @@ class Prebreakdown:
         return np.min([
                         np.min(np.float64(1)/(np.sqrt((s.u_z/s.dz)**2 + (s.u_r/s.dr)**2))),
                         np.min(np.float64(s.dz)/s.u_z_bottom(s.rr,s.time))
-                        ]) #cast numerators as np.float64 to avoid division by zero error
+                        ]) / 4 #cast numerators as np.float64 to avoid division by zero error
 
     def initialize(s):
         s.sor(0.97,iterations=10000,EPS=1e-12)
