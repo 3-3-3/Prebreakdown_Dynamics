@@ -138,7 +138,7 @@ class Prebreakdown:
         s.E_max = []
         s.iter = 0
 
-    def step(s, method='Drift-Diffusion', smooth=False, iterations=1000, sp_r=0.97, EPS=1e-10, save=True, verbose=True, save_every=10):
+    def step(s, method='Drift-Diffusion', smooth=False, smooth_sigma=0, alpha=0, iterations=1000, sp_r=0.97, EPS=1e-10, save=True, verbose=True, save_every=10):
         '''
         Take a step, updating the time step dt, electric potential, and electron density. Use either a Drift-Diffusion prescription or Fluid model.
 
@@ -202,9 +202,9 @@ class Prebreakdown:
             s.continuity()
 
         if smooth:
-            s.n = gaussian_filter(s.n,sigma=[2*s.dr,2*s.dz])
-            s.u_r = gaussian_filter(s.u_r,sigma=[2*s.dr,2*s.dz])
-            s.u_z = gaussian_filter(s.u_z,sigma=[2*s.dr,2*s.dz])
+            s.n = gaussian_filter(s.n, sigma=smooth_sigma)
+            s.u_r = gaussian_filter(s.u_r, sigma=smooth_sigma)
+            s.u_z = gaussian_filter(s.u_z, sigma=smooth_sigma)
 
         if save and (s.iter % save_every == 0):
             s.save(verbose=verbose)
@@ -362,38 +362,38 @@ class Prebreakdown:
             for l in range(1,l_max):
                 #update interior points
                 u_r_new[j,l] = s.u_r_old[j,l] - 2*s.e_c/s.m_e*s.E_fld[1][j,l]*s.dt - s.u_r[j,l]*(s.u_r[j,l+1]-s.u_r[j,l-1])/s.dr*s.dt \
-                                    - s.u_z[j,l]*(s.u_r[j+1,l]-s.u_r[j-1,l])/s.dz*s.dt - 2*s.nu*s.u_r[j,l]*s.dt
+                                    - s.u_z[j,l]*(s.u_r[j+1,l]-s.u_r[j-1,l])/s.dz*s.dt - 2*s.nu*s.u_r_old[j,l]*s.dt
 
                 u_z_new[j,l] = s.u_z_old[j,l] - 2*s.e_c/s.m_e*s.E_fld[0][j,l]*s.dt - s.u_z[j,l]*(s.u_z[j+1,l]-s.u_z[j-1,l])/s.dz*s.dt \
-                                    - s.u_r[j,l]*(s.u_z[j,l+1]-s.u_z[j,l-1])/s.dr*s.dt - 2*s.nu*s.u_z[j,l]*s.dt
+                                    - s.u_r[j,l]*(s.u_z[j,l+1]-s.u_z[j,l-1])/s.dr*s.dt - 2*s.nu*s.u_z_old[j,l]*s.dt
 
         for l in range(1,l_max):
             #update boundaries in z
             #First, update boundary at z=0
             #Where u is set at the boundary
             #diffuse boundary at z=1
-            u_r_new[j_max,l] = s.u_r[j_max-1,l]-2*s.e_c/s.m_e*s.E_fld[0][j_max,l]*s.dt-s.u_r[j_max,l]*(s.u_r[j_max,l+1]-s.u_r[j_max,l-1])/s.dr*s.dt-2*s.nu*s.u_r[j_max,l]*s.dt
-            u_z_new[j_max,l] = s.u_z[j_max-1,l] - s.u_z[j_max,l] * (s.u_z[j_max,l+1] - s.u_z[j_max,l-1])/s.dr*s.dt - 2*s.nu*s.u_r[j_max,l]*s.dt
+            u_r_new[j_max,l] = s.u_r[j_max-1,l]-2*s.e_c/s.m_e*s.E_fld[0][j_max,l]*s.dt-s.u_r[j_max,l]*(s.u_r[j_max,l+1]-s.u_r[j_max,l-1])/s.dr*s.dt-2*s.nu*s.u_r_old[j_max,l]*s.dt
+            u_z_new[j_max,l] = s.u_z[j_max-1,l] - s.u_z[j_max,l] * (s.u_z[j_max,l+1] - s.u_z[j_max,l-1])/s.dr*s.dt - 2*s.nu*s.u_r_old[j_max,l]*s.dt
 
         for j in range(1,j_max):
             #update boundaries in r
             #first, at r=0 (axisymmetric)
-            u_r_new[j,0] = s.u_r_old[j,0] - s.u_z[j,0]*(s.u_r[j+1,0]-s.u_r[j-1,0])/s.dz*s.dt - 2*s.nu*s.u_r[j,0]*s.dt
-            u_z_new[j,0] = s.u_z_old[j,0] - 2*s.e_c/s.m_e*s.E_fld[0][j,0]*s.dt - s.u_z[j,0]*(s.u_z[j+1,0]-s.u_z[j-1,0])/s.dz*s.dt - 2*s.nu*s.u_z[j,0]*s.dt
+            u_r_new[j,0] = s.u_r_old[j,0] - s.u_z[j,0]*(s.u_r[j+1,0]-s.u_r[j-1,0])/s.dz*s.dt - 2*s.nu*s.u_r_old[j,0]*s.dt
+            u_z_new[j,0] = s.u_z_old[j,0] - 2*s.e_c/s.m_e*s.E_fld[0][j,0]*s.dt - s.u_z[j,0]*(s.u_z[j+1,0]-s.u_z[j-1,0])/s.dz*s.dt - 2*s.nu*s.u_z_old[j,0]*s.dt
 
             #and the boundary at l=l_max
-            u_r_new[j,l_max] = s.u_r[j,l_max-1]-s.u_z[j,l_max]*(s.u_r[j+1,l_max]-s.u_r[j-1,l_max])/s.dz*s.dt-2*s.nu*s.u_r[j,l]*s.dt
-            u_z_new[j,l_max] = s.u_z[j,l_max-1]-2*s.e_c/s.m_e*s.E_fld[0][j,l_max]*s.dt-s.u_z[j,l_max]*(s.u_z[j+1,l_max]-s.u_z[j-1,l_max])/s.dz*s.dt-2*s.nu*s.u_z[j,l_max]*s.dt
+            u_r_new[j,l_max] = s.u_r[j,l_max-1]-s.u_z[j,l_max]*(s.u_r[j+1,l_max]-s.u_r[j-1,l_max])/s.dz*s.dt-2*s.nu*s.u_r_old[j,l]*s.dt
+            u_z_new[j,l_max] = s.u_z[j,l_max-1]-2*s.e_c/s.m_e*s.E_fld[0][j,l_max]*s.dt-s.u_z[j,l_max]*(s.u_z[j+1,l_max]-s.u_z[j-1,l_max])/s.dz*s.dt-2*s.nu*s.u_z_old[j,l_max]*s.dt
 
         #finally, deal with the corners
         #where BC are mixed
         #at j=j_max and l=l_max we have:
-        u_r_new[j_max,l_max] = s.u_r[j_max-1,l_max-1] - 2*s.nu*s.u_r[j_max,l_max]*s.dt
-        u_z_new[j_max,l_max] = s.u_z[j_max-1,l_max-1] - 2*s.nu*s.u_r[j_max,l_max]*s.dt
+        u_r_new[j_max,l_max] = s.u_r[j_max-1,l_max-1] - 2*s.nu*s.u_r_old[j_max,l_max]*s.dt
+        u_z_new[j_max,l_max] = s.u_z[j_max-1,l_max-1] - 2*s.nu*s.u_r_old[j_max,l_max]*s.dt
 
         #at j=j_max and l=0
-        u_r_new[j_max,0] = s.u_r[j_max-1,0] - 2*s.nu*s.u_r[j,0]*s.dt
-        u_z_new[j_max,0] = s.u_z[j_max-1,0] - 2*s.nu*s.u_z[j,0]*s.dt
+        u_r_new[j_max,0] = s.u_r[j_max-1,0] - 2*s.nu*s.u_r_old[j,0]*s.dt
+        u_z_new[j_max,0] = s.u_z[j_max-1,0] - 2*s.nu*s.u_z_old[j,0]*s.dt
 
         s.u_r_old = s.u_r.copy()
         s.u_z_old = s.u_z.copy()
@@ -687,7 +687,7 @@ def n_u_animation(times, base, interval=1, save=False):
         u_z = np.load(os.path.join(target,'u_z.npy'))
 
 
-        cont = ax.contourf(rr, zz, n, levels=20)
+        cont = ax.contourf(rr, zz, n, levels=50)
         cbar = fig.colorbar(cont)
 
         u_r_plot = np.ma.masked_where(n == 0, u_r)
