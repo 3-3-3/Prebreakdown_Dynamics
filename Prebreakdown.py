@@ -121,7 +121,7 @@ class Prebreakdown:
             s.V[0,i] = V_bottom(s.rr[0,i],0)
             s.V[-1,i] = V_top(s.rr[-1,i],0)
             #n has 2 layers will not be touched so that the potential extends beyond it
-            s.n[1,i] = n_bottom(s.rr[1,i],0)
+
 
         s.n_bottom = n_bottom
         s.u_z_bottom = u_z_bottom
@@ -150,7 +150,7 @@ class Prebreakdown:
 
         s.iter += 1
         s.f = s.e_c/pc.epsilon_0*s.dr*s.dz*s.n
-        s.sor(sp_r, iterations=iterations, EPS=EPS)
+        s.sor(sp_r, iterations=iterations, EPS=EPS,verbose=verbose)
         s.resolve_E_fld()
         s.E_max.append(s.E_mag().max())
 
@@ -170,15 +170,16 @@ class Prebreakdown:
             s.drift_diffusion()
 
         elif method == 'Fluid':
-            #update the electron density at the cathode
+            #update the electron drift velocity at the cathode (should be constant...)
             for i in range(s.rr[0,:].size):
-                s.n[1,i] = s.n_bottom(s.rr[1,i], s.time)
                 s.u_z[0,i] = s.u_z_bottom(s.rr[0,i], s.time)
                 s.u_r[0,i] = 0
 
             s.fluid()
             target_dt = s.fluid_cfl()
-            print(f'target_dt: {target_dt}')
+            if verbose:
+                print(f'target_dt: {target_dt}')
+
             ratio = target_dt / s.dt
             if verbose:
                 print(f'Old dt: {s.dt}, ratio: {ratio}')
@@ -187,7 +188,6 @@ class Prebreakdown:
                 s.dt = np.sqrt(ratio) * s.dt
             elif ratio >= 1.025:
                 s.dt = 1.05 * s.dt
-                print(s.dt)
             elif ratio <= 0.9025:
                 s.dt = 0.95 * s.dt
 
@@ -228,7 +228,7 @@ class Prebreakdown:
 
         s.iter += 1
         s.f = s.e_c/pc.epsilon_0*s.dr*s.dz*s.n
-        s.sor(sp_r, iterations=iterations, EPS=EPS)
+        s.sor(sp_r, iterations=iterations, EPS=EPS, verbose=verbose)
         s.resolve_E_fld()
         s.E_max.append(s.E_mag().max())
 
@@ -255,6 +255,7 @@ class Prebreakdown:
             s.times.append(s.time)
 
             cfl = s.fluid_cfl()
+
             if dt > cfl:
                 print(f'WARNING: time step is {s.dt}, but cfl step is: {cfl}. Time step is unstable!')
 
@@ -330,6 +331,9 @@ class Prebreakdown:
             n_new[j_max-1,l] = s.n[j_max-2,l] \
                             - 4*s.dt/(s.rr[j_max-1,l+1]**2-s.rr[j_max-1,l-1]**2)*(s.rr[j_max-1,l+1]*s.n[j_max-1,l+1]*s.u_r[j_max-1,l+1]-s.rr[j_max-1,l-1]*s.n[j_max-1,l-1]*s.u_r[j_max-1,l-1])
 
+            #boundary condition at j=0 (von Neumann)
+            n_new[0,l] = s.n_old[0,l] + s.dt * s.n_bottom(s.rr[0,l], s.time) * s.u_z_bottom(s.rr[0,l], s.time)
+
         #Update boundaries at l=0 and l=L
         for j in range(2,j_max-1):
             #boundary at l=0
@@ -400,7 +404,7 @@ class Prebreakdown:
         s.u_r = u_r_new.copy()
         s.u_z = u_z_new.copy()
 
-    def sor(s, sp_r, iterations=1000, EPS=1e-10):
+    def sor(s, sp_r, iterations=1000, EPS=1e-10, verbose=True):
         '''
         Resolve electric potential using successive overrelaxation (see e.g. Numerical Recipes Chapter 20)
 
@@ -463,13 +467,26 @@ class Prebreakdown:
 
                 if n > 5:
                     if anorm <= EPS*anorm_i:
-                        print(f'Error reduced by factor of {EPS} in {n} iterations')
+                        if verbose:
+                            print(f'Error reduced by factor of {EPS} in {n} iterations')
                         return True
                 else:
                     anorm_i = anorm
+        if verbose:
+            print(f'Error reduced by factor of {anorm} in {iter} iterations')
 
-        print(f'Error reduced by factor of {anorm} in {iter} iterations')
         return False
+
+    def J(s,j=1):
+        '''
+        Calculate the current through a circular area at index j.
+        '''
+        J = 0
+
+        for l in range(0,s.rr.shape[1]-1):
+            J += 2*s.e_c / (s.r_max ** 2) * (s.n[j,l]*s.u_z[j,l])*s.rr[j,l]*s.dr
+
+        return J
 
     def resolve_E_r(s):
         '''
@@ -626,7 +643,7 @@ def dir_name_from_time(time):
 
 def n_contour_plot(fig, ax, rr, zz, n):
     n_plot = np.ma.masked_where(n <= 0, n)
-    cf = ax.contourf(rr,zz,n_plot,locator=ticker.LogLocator())
+    cf = ax.contourf(rr,zz,n_plot,levels=50)
     return fig, ax, cf
 
 def grid(fig, ax, rr, zz):
@@ -672,6 +689,7 @@ def n_u_animation(times, base, interval=1, save=False):
 
     ax.set_xlabel(r'$r$ (m)')
     ax.set_ylabel(r'$z$ (m)')
+    fig.suptitle(r'Evolution of $\vec{u_e}$ and $n_e$')
 
     def ani_func(time, base, ax, fig, rr, zz):
         nonlocal quiv, cont, cbar
@@ -689,6 +707,7 @@ def n_u_animation(times, base, interval=1, save=False):
 
         cont = ax.contourf(rr, zz, n, levels=50)
         cbar = fig.colorbar(cont)
+        cbar.set_label(r'$n_e$', rotation=0)
 
         u_r_plot = np.ma.masked_where(n == 0, u_r)
         u_z_plot = np.ma.masked_where(n == 0, u_z)
