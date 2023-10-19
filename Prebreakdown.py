@@ -15,7 +15,7 @@ import string
 
 
 class Prebreakdown:
-    def __init__(s, N_z, N_r, Dz, Dr, dt=1e-15, nu=0, diffusion=0, mobility=0,
+    def __init__(s, N_z, N_r, Dz, Dr, dt=1e-15, nu_coeff=0, diffusion=0, mobility=0,
                     V_top=lambda r, t : 0, V_bottom=lambda r, t : 0,
                     V_r=lambda z, t : 0, n_bottom=lambda r, t : 0,
                     u_z_bottom=lambda r, t: 0, save_dir='out'):
@@ -84,6 +84,8 @@ class Prebreakdown:
         s.rr, s.zz = np.meshgrid(np.linspace(0, s.r_max, s.N_r),
                                     np.linspace(0, s.z_max, s.N_z))
 
+        s.dV = 2 * np.pi * s.dz * s.dr * s.rr #volume element
+
         s.V = np.zeros(s.rr.shape)
         s.E_fld = (np.zeros(s.rr.shape), np.zeros(s.rr.shape))
         s.n = np.zeros(s.rr.shape); s.n_old = np.zeros(s.rr.shape)
@@ -102,7 +104,7 @@ class Prebreakdown:
 
         s.e_c = pc.e
         s.m_e = pc.m_e
-        s.nu = nu
+        s.nu_coeff = nu_coeff
 
         s.diffusion = diffusion
         s.mobility = mobility
@@ -270,7 +272,6 @@ class Prebreakdown:
         if verbose:
             print(f'Step took: {time.time() - t}')
 
-
     def drift_diffusion(s):
         '''update electron density based on a drift-diffusion prescription using leapfrog and relevant boundary conditions'''
         j_max = s.rr.shape[0] - 1
@@ -366,38 +367,38 @@ class Prebreakdown:
             for l in range(1,l_max):
                 #update interior points
                 u_r_new[j,l] = s.u_r_old[j,l] - 2*s.e_c/s.m_e*s.E_fld[1][j,l]*s.dt - s.u_r[j,l]*(s.u_r[j,l+1]-s.u_r[j,l-1])/s.dr*s.dt \
-                                    - s.u_z[j,l]*(s.u_r[j+1,l]-s.u_r[j-1,l])/s.dz*s.dt - 2*s.nu*s.u_r_old[j,l]*s.dt
+                                    - s.u_z[j,l]*(s.u_r[j+1,l]-s.u_r[j-1,l])/s.dz*s.dt - 2*s.nu_coeff*s.n[j,l]*s.u_r_old[j,l]*s.dt
 
                 u_z_new[j,l] = s.u_z_old[j,l] - 2*s.e_c/s.m_e*s.E_fld[0][j,l]*s.dt - s.u_z[j,l]*(s.u_z[j+1,l]-s.u_z[j-1,l])/s.dz*s.dt \
-                                    - s.u_r[j,l]*(s.u_z[j,l+1]-s.u_z[j,l-1])/s.dr*s.dt - 2*s.nu*s.u_z_old[j,l]*s.dt
+                                    - s.u_r[j,l]*(s.u_z[j,l+1]-s.u_z[j,l-1])/s.dr*s.dt - 2*s.nu_coeff*s.n[j,l]*s.u_z_old[j,l]*s.dt
 
         for l in range(1,l_max):
             #update boundaries in z
             #First, update boundary at z=0
             #Where u is set at the boundary
             #diffuse boundary at z=1
-            u_r_new[j_max,l] = s.u_r[j_max-1,l]-2*s.e_c/s.m_e*s.E_fld[0][j_max,l]*s.dt-s.u_r[j_max,l]*(s.u_r[j_max,l+1]-s.u_r[j_max,l-1])/s.dr*s.dt-2*s.nu*s.u_r_old[j_max,l]*s.dt
-            u_z_new[j_max,l] = s.u_z[j_max-1,l] - s.u_z[j_max,l] * (s.u_z[j_max,l+1] - s.u_z[j_max,l-1])/s.dr*s.dt - 2*s.nu*s.u_r_old[j_max,l]*s.dt
+            u_r_new[j_max,l] = s.u_r[j_max-1,l]-2*s.e_c/s.m_e*s.E_fld[0][j_max,l]*s.dt-s.u_r[j_max,l]*(s.u_r[j_max,l+1]-s.u_r[j_max,l-1])/s.dr*s.dt-2*s.nu_coeff*s.n[j,l]*s.u_r_old[j_max,l]*s.dt
+            u_z_new[j_max,l] = s.u_z[j_max-1,l] - s.u_z[j_max,l] * (s.u_z[j_max,l+1] - s.u_z[j_max,l-1])/s.dr*s.dt - 2*s.nu_coeff*s.n[j,l]*s.u_r_old[j_max,l]*s.dt
 
         for j in range(1,j_max):
             #update boundaries in r
             #first, at r=0 (axisymmetric)
-            u_r_new[j,0] = s.u_r_old[j,0] - s.u_z[j,0]*(s.u_r[j+1,0]-s.u_r[j-1,0])/s.dz*s.dt - 2*s.nu*s.u_r_old[j,0]*s.dt
-            u_z_new[j,0] = s.u_z_old[j,0] - 2*s.e_c/s.m_e*s.E_fld[0][j,0]*s.dt - s.u_z[j,0]*(s.u_z[j+1,0]-s.u_z[j-1,0])/s.dz*s.dt - 2*s.nu*s.u_z_old[j,0]*s.dt
+            u_r_new[j,0] = s.u_r_old[j,0] - s.u_z[j,0]*(s.u_r[j+1,0]-s.u_r[j-1,0])/s.dz*s.dt - 2*s.nu_coeff*s.n[j,l]*s.u_r_old[j,0]*s.dt
+            u_z_new[j,0] = s.u_z_old[j,0] - 2*s.e_c/s.m_e*s.E_fld[0][j,0]*s.dt - s.u_z[j,0]*(s.u_z[j+1,0]-s.u_z[j-1,0])/s.dz*s.dt - 2*s.nu_coeff*s.n[j,l]*s.u_z_old[j,0]*s.dt
 
             #and the boundary at l=l_max
-            u_r_new[j,l_max] = s.u_r[j,l_max-1]-s.u_z[j,l_max]*(s.u_r[j+1,l_max]-s.u_r[j-1,l_max])/s.dz*s.dt-2*s.nu*s.u_r_old[j,l]*s.dt
-            u_z_new[j,l_max] = s.u_z[j,l_max-1]-2*s.e_c/s.m_e*s.E_fld[0][j,l_max]*s.dt-s.u_z[j,l_max]*(s.u_z[j+1,l_max]-s.u_z[j-1,l_max])/s.dz*s.dt-2*s.nu*s.u_z_old[j,l_max]*s.dt
+            u_r_new[j,l_max] = s.u_r[j,l_max-1]-s.u_z[j,l_max]*(s.u_r[j+1,l_max]-s.u_r[j-1,l_max])/s.dz*s.dt-2*s.nu_coeff*s.n[j,l]*s.u_r_old[j,l]*s.dt
+            u_z_new[j,l_max] = s.u_z[j,l_max-1]-2*s.e_c/s.m_e*s.E_fld[0][j,l_max]*s.dt-s.u_z[j,l_max]*(s.u_z[j+1,l_max]-s.u_z[j-1,l_max])/s.dz*s.dt-2*s.nu_coeff*s.n[j,l]*s.u_z_old[j,l_max]*s.dt
 
         #finally, deal with the corners
         #where BC are mixed
         #at j=j_max and l=l_max we have:
-        u_r_new[j_max,l_max] = s.u_r[j_max-1,l_max-1] - 2*s.nu*s.u_r_old[j_max,l_max]*s.dt
-        u_z_new[j_max,l_max] = s.u_z[j_max-1,l_max-1] - 2*s.nu*s.u_r_old[j_max,l_max]*s.dt
+        u_r_new[j_max,l_max] = s.u_r[j_max-1,l_max-1] - 2*s.nu_coeff*s.n[j,l]*s.u_r_old[j_max,l_max]*s.dt
+        u_z_new[j_max,l_max] = s.u_z[j_max-1,l_max-1] - 2*s.nu_coeff*s.n[j,l]*s.u_r_old[j_max,l_max]*s.dt
 
         #at j=j_max and l=0
-        u_r_new[j_max,0] = s.u_r[j_max-1,0] - 2*s.nu*s.u_r_old[j,0]*s.dt
-        u_z_new[j_max,0] = s.u_z[j_max-1,0] - 2*s.nu*s.u_z_old[j,0]*s.dt
+        u_r_new[j_max,0] = s.u_r[j_max-1,0] - 2*s.nu_coeff*s.n[j,l]*s.u_r_old[j,0]*s.dt
+        u_z_new[j_max,0] = s.u_z[j_max-1,0] - 2*s.nu_coeff*s.n[j,l]*s.u_z_old[j,0]*s.dt
 
         s.u_r_old = s.u_r.copy()
         s.u_z_old = s.u_z.copy()
@@ -487,6 +488,12 @@ class Prebreakdown:
             J += 2*s.e_c / (s.r_max ** 2) * (s.n[j,l]*s.u_z[j,l])*s.rr[j,l]*s.dr
 
         return J
+
+    def N(s):
+        '''
+        Calculate the total number of electrons in the computational domain (easy check to see if different grids are giving the same physics)
+        '''
+        return np.sum(s.n * s.dV)
 
     def resolve_E_r(s):
         '''
@@ -641,9 +648,10 @@ def get_time_from_dir_name(dir_name):
 def dir_name_from_time(time):
     return f'time_{time}_s'
 
-def n_contour_plot(fig, ax, rr, zz, n):
+def n_contour_plot(fig, ax, rr, zz, n,vmin=None,vmax=None):
     n_plot = np.ma.masked_where(n <= 0, n)
-    cf = ax.contourf(rr,zz,n_plot,levels=50)
+    cf = ax.contourf(rr,zz,n_plot,levels=25,cmap=cm.magma,vmin=vmin,vmax=vmax)
+    cf = ax.contour(rr,zz,n_plot,levels=25,colors=['white'],linewidths=[0.2])
     return fig, ax, cf
 
 def grid(fig, ax, rr, zz):
@@ -705,7 +713,7 @@ def n_u_animation(times, base, interval=1, save=False):
         u_z = np.load(os.path.join(target,'u_z.npy'))
 
 
-        cont = ax.contourf(rr, zz, n, levels=50)
+        cont = ax.contourf(rr, zz, n, levels=25)
         cbar = fig.colorbar(cont)
         cbar.set_label(r'$n_e$', rotation=0)
 
