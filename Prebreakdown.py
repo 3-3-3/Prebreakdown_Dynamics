@@ -468,7 +468,7 @@ class Prebreakdown:
                 if n > 5:
                     if anorm <= EPS*anorm_i:
                         if verbose:
-                            print(f'Error reduced by factor of {EPS} in {n} iterations')
+                            print(f'Error reduced by factor of {EPS} in {n} iterations and anorm = {anorm}')
                         return True
                 else:
                     anorm_i = anorm
