@@ -21,6 +21,10 @@ def bessel_boundary(V_0,r_max):
     alpha = jn_zeros(0,1)[0]
     return lambda r, t : V_0 * j0(alpha * r / r_max) if r <= r_max else 0
 
+def analytic(rr, zz):
+    alpha = jn_zeros(0,1)[0]
+    return 1/np.sinh(alpha) * j0(alpha * rr) * np.sinh(alpha * zz)
+
 def step_boundary(amp, r_max):
     '''
     A boundary which suddenly goes to zero at r_max. Can be used for either the potential or the electron number density.
@@ -39,8 +43,8 @@ def dir_name_from_time(time):
 
 def n_contour_plot(fig, ax, rr, zz, n,vmin=None,vmax=None):
     n_plot = np.ma.masked_where(n <= 0, n)
-    cf = ax.contourf(rr,zz,n_plot,levels=40,cmap=cm.viridis,vmin=vmin,vmax=vmax)
-    cf = ax.contour(rr,zz,n_plot,levels=40,colors=['white'],linewidths=[0.2])
+    cf = ax.contourf(rr,zz,n_plot,levels=35,cmap=cm.viridis,vmin=vmin,vmax=vmax)
+    #cf = ax.contour(rr,zz,n_plot,levels=35,colors=['grey'],linewidths=[0.5])
     return fig, ax, cf
 
 def grid(fig, ax, rr, zz):
@@ -211,8 +215,8 @@ def n_E_fld_pertubation_plot(target,axes,fig,E_r_0,E_z_0,a=0,b=-1,c=0,d=-1,i_r=1
     norm = mpl.colors.Normalize(vmin=emin,vmax=emax)
     cmap = mpl.cm.viridis
 
-    axes[0].tick_params(axis='both', which='major', labelsize=18)
-    axes[1].tick_params(axis='both', which='major', labelsize=18)
+    axes[0].tick_params(axis='both', which='major')
+    axes[1].tick_params(axis='both', which='major')
     axes[1].quiver(rr[45::i_z,::i_r],
                    zz[45::i_z,::i_r],
                    E_r_pertubation,
@@ -223,15 +227,27 @@ def n_E_fld_pertubation_plot(target,axes,fig,E_r_0,E_z_0,a=0,b=-1,c=0,d=-1,i_r=1
     cbar = fig.colorbar(mpl.cm.ScalarMappable(norm=norm,cmap=cmap),ax=axes[1])
 
 def time_evol_plot(targets,base,E_r_0,E_z_0,a=0,b=-1,c=0,d=-1,i_r=1,i_z=1,save=False):
-    fig = plt.figure(figsize=(22,25))
-    plt.style.use('seaborn-poster')
+    fig = plt.figure(figsize=(11,12))
+    plt.style.use('seaborn-v0_8-paper')
     outer_grid = fig.add_gridspec(4,2,wspace=0.2,hspace=0.4)
 
+
+    files = os.listdir(base)
+    try:
+        files.remove('.DS_Store')
+    except:
+        pass
+
+    try:
+        files.remove('animation.gif')
+    except:
+        pass
+
+    times = [get_time_from_dir_name(f) for f in files]
+    times = np.sort(np.array(times))
+    #times.sort()
+
     for i in range(len(targets)):
-        time = get_time_from_dir_name(targets[i])
-
-
-
         m = int(np.floor(i / 2))
         n = i % 2
 
@@ -240,34 +256,37 @@ def time_evol_plot(targets,base,E_r_0,E_z_0,a=0,b=-1,c=0,d=-1,i_r=1,i_z=1,save=F
         #axes[0].ticklabel_format(style='scientific',scilimits=(-4,-4))
         #axes[1].ticklabel_format(style='scientific',scilimits=(-4,-4))
 
-        axes[0].set_ylabel(r'$z$ ($mm$)',fontsize=18)
-        axes[0].set_xlabel(r'$r$ ($mm$)',fontsize=18)
-        axes[1].set_xlabel(r'$r$ ($mm$)',fontsize=18)
+        axes[0].set_ylabel(r'$z$ ($mm$)')
+        axes[0].set_xlabel(r'$r$ ($mm$)')
+        axes[1].set_xlabel(r'$r$ ($mm$)')
 
-        txt_str = f'{np.round(1e12*time,1)} ps'
+        txt_str = f'{np.round(1e12*targets[i],1)} ps'
         props = {'facecolor':'white'}
-        axes[0].text(0.55,0.90,txt_str,transform=axes[0].transAxes,bbox=props,fontsize=16)
-        axes[1].text(0.55,0.90,txt_str,transform=axes[1].transAxes,bbox=props,fontsize=16)
-        axes[0].set_title(r'$n_e$',fontsize=25)
-        axes[1].set_title(r'$\vec{E} - \vec{E}_0$',fontsize=25)
+        axes[0].text(0.50,0.90,txt_str,transform=axes[0].transAxes,bbox=props,fontsize=8)
+        axes[1].text(0.53,0.90,txt_str,transform=axes[1].transAxes,bbox=props,fontsize=8)
+        axes[0].set_title(r'$n_e$')
+        axes[1].set_title(r'$\vec{E} - \vec{E}_0$')
 
         axes[0].set_aspect('equal')
         axes[1].set_aspect('equal')
 
 
 
-
-        t = os.path.join(base,targets[i])
+        time = find_nearest(times,targets[i])
+        print(f'Target: {targets[i]}, time: {time}')
+        t = os.path.join(base,dir_name_from_time(time))
         n_E_fld_pertubation_plot(t,axes,fig,E_r_0,E_z_0,a=a,b=b,c=c,d=d,i_r=i_r,i_z=i_z)
 
         if save:
             fig.savefig('Main_figure.pdf')
 
-def residual(V,V_an,rr,zz,rr_an,zz_an):
+def residual_one_by_one(V,V_an,rr,zz,rr_an,zz_an):
     f_per_c = rr_an.shape[0] / rr.shape[0]
     f_per_c = int(f_per_c)
 
     res = 0
+    V_tot = 0
+
 
     for j_c in range(1, rr.shape[0]-1):
         for l_c in range(1,zz.shape[0]-1):
@@ -276,10 +295,60 @@ def residual(V,V_an,rr,zz,rr_an,zz_an):
                 j_f = j_c*f_per_c + m
                 for n in range(f_per_c):
                     l_f = l_c*f_per_c + n
+                    print(np.abs(V_an[j_f,l_f] - V[j_c, l_c]) / V_an[j_f,l_f])
 
                     res += np.abs(V_an[j_f,l_f] - V[j_c, l_c]) / V_an[j_f,l_f]
 
-    return res / ((rr_an.shape[0]-1) * (rr_an.shape[1]-1)) #One less than total number of points
+    return res / ((rr_an.shape[0]) * (rr_an.shape[1])) #One less than total number of points
+
+def integrate(V,rr,zz):
+    dz = zz[1,0] - zz[0,0]
+    dr = rr[0,1] - rr[0,0]
+
+    V_tot = 0
+
+    for j in range(0,rr.shape[0]-1):
+        for l in range(0,zz.shape[1]-1):
+            tau = dz * np.pi * ((rr[j,l] + dr / 2) ** 2 - (rr[j,l] - dr / 2) ** 2)
+            V_tot += V[j,l] * tau
+
+    return V_tot
+
+def total_error(V,V_f,rr,zz,rr_f,zz_f):
+    V_tot = integrate(V,rr,zz)
+    V_tot_f = integrate(V_f,rr_f,zz_f)
+
+    return np.abs(V_tot - V_tot_f) / V_tot_f
+
+
+def residual(V,V_f,rr,zz,rr_f,zz_f):
+    f_per_c = int(rr_f.shape[0] / rr.shape[0])
+    print(f_per_c)
+
+    #only works on uniform grids...
+    dz_f = zz_f[1,0] - zz_f[0,0]
+    dr_f = rr_f[0,1] - rr_f[0,0]
+
+    res = 0
+    V_tot = 0
+
+
+    for j_c in range(1, rr.shape[0]-1): #iterate over the course grid
+        for l_c in range(1,zz.shape[0]-1):
+
+            for m in range(f_per_c): #and then the fine grid
+                j_f = j_c*f_per_c + m
+                for n in range(f_per_c):
+                    l_f = l_c*f_per_c + n
+                    tau = dz_f * np.pi * ((rr_f[j_f,l_f] + dr_f / 2) ** 2 - (rr_f[j_f,l_f] - dr_f / 2) ** 2)
+
+                    res += np.abs(V_f[j_f,l_f] - V[j_c, l_c]) * tau
+                    print(f'res: {res}')
+                    V_tot += V_f[j_f,l_f] * tau
+                    print(f'V_tot: {V_tot}')
+
+    return res / V_tot #One less than total number of points
+
 
 
 def find_nearest(array,value):
@@ -291,3 +360,51 @@ def find_nearest(array,value):
         return array[idx-1]
     else:
         return array[idx]
+
+
+def find_nearest_idx(array,value):
+    '''
+    ripped off stackoverflow
+    '''
+    idx = np.searchsorted(array, value, side="left")
+    if idx > 0 and (idx == len(array) or math.fabs(value - array[idx-1]) < math.fabs(value - array[idx])):
+        return idx-1
+    else:
+        return idx
+
+def E_max_n_max(base):
+    files = os.listdir(base)
+
+    try:
+        files.remove('.DS_Store')
+    except:
+        pass
+
+    try:
+        files.remove('animation.gif')
+    except:
+        pass
+
+    times = [get_time_from_dir_name(f) for f in files]
+    times = np.sort(np.array(times))
+
+    E_r_0 = np.load(os.path.join(os.path.join(base,dir_name_from_time(times[0])),'E_r.npy'))
+    E_z_0 = np.load(os.path.join(os.path.join(base,dir_name_from_time(times[0])),'E_z.npy'))
+    print(f'E_0 = {np.max(np.sqrt(E_r_0 ** 2 + E_z_0 ** 2))}')
+
+    E_max = []
+    n_max = []
+
+    min_z = int(E_z_0.shape[1] * 0.80)
+    max_r = int(E_r_0.shape[0]*0.25)
+
+    for time in times:
+        E_r = np.load(os.path.join(os.path.join(base, dir_name_from_time(time)),'E_r.npy'))
+        E_z = np.load(os.path.join(os.path.join(base, dir_name_from_time(time)),'E_z.npy'))
+        n = np.load(os.path.join(os.path.join(base, dir_name_from_time(time)),'n.npy'))
+
+        E_mag = np.sqrt((E_r-E_r_0)**2 + (E_z-E_z_0)**2)
+        E_max.append(np.max(E_mag[min_z:,:]))
+        n_max.append(np.max(n[min_z:,:max_r]))
+
+    return (times, np.array(E_max),np.array(n_max))
