@@ -139,7 +139,8 @@ class Prebreakdown:
         s.E_max = []
         s.iter = 0
 
-    def step(s, method='Drift-Diffusion', smooth=False, smooth_sigma=0, alpha=0, iterations=1000, sp_r=0.97, EPS=1e-10, save=True, verbose=True, save_every=10):
+    def step(s, method='Drift-Diffusion', smooth=False, smooth_sigma=0, alpha=0, iterations=1000,
+                    sp_r=0.97, EPS=1e-10, save=True, verbose=True, save_every=10,substeps=1,resolve_pot_every=1):
         '''
         Take a step, updating the time step dt, electric potential, and electron density. Use either a Drift-Diffusion prescription or Fluid model.
 
@@ -150,8 +151,12 @@ class Prebreakdown:
         t = time.time()
 
         s.iter += 1
-        s.f = s.e_c/pc.epsilon_0*s.dr*s.dz*s.n
-        s.sor(sp_r, iterations=iterations, EPS=EPS,verbose=verbose)
+
+        if (s.iter % resolve_pot_every) == 0:
+            print('Resolving potential!')
+            s.f = s.e_c/pc.epsilon_0*s.dr*s.dz*s.n
+            s.sor(sp_r, iterations=iterations, EPS=EPS,verbose=verbose)
+
         s.resolve_E_fld()
         s.E_max.append(s.E_mag().max())
 
@@ -172,46 +177,49 @@ class Prebreakdown:
 
         elif method == 'Fluid':
             #update the electron drift velocity at the cathode (should be constant...)
-            for i in range(s.rr[0,:].size):
-                s.u_z[0,i] = s.u_z_bottom(s.rr[0,i], s.time)
-                s.u_r[0,i] = 0
+            for k in range(substeps):
+                #Take substeps steps before re-resolving potential
+                for i in range(s.rr[0,:].size):
+                    s.u_z[0,i] = s.u_z_bottom(s.rr[0,i], s.time)
+                    s.u_r[0,i] = 0
 
-            s.fluid()
-            target_dt = s.fluid_cfl()
+                s.fluid()
+                target_dt = s.fluid_cfl() / substeps
+                if verbose and (k==0):
+                    print(f'target_dt: {target_dt}')
+
+                ratio = target_dt / s.dt
+
+                if verbose and (k==0):
+                    print(f'Old dt: {s.dt}, ratio: {ratio}')
+
+                if ratio < 1.1025 and ratio > 0.9025:
+                    s.dt = np.sqrt(ratio) * s.dt
+                elif ratio >= 1.025:
+                    s.dt = 1.05 * s.dt
+                elif ratio <= 0.9025:
+                    s.dt = 0.95 * s.dt
+
+                #s.dt = s.fluid_cfl()
+                s.time += s.dt
+                s.times.append(s.time)
+
+                if verbose and (k==0):
+                    print(f'Time step limited to: {s.dt} at time: {s.time}')
+
+                #resolve fluid velocity and update electron density using continuity equation
+                s.continuity()
+
+            if smooth:
+                s.n = gaussian_filter(s.n, sigma=smooth_sigma)
+                s.u_r = gaussian_filter(s.u_r, sigma=smooth_sigma)
+                s.u_z = gaussian_filter(s.u_z, sigma=smooth_sigma)
+
+            if save and (s.iter % save_every == 0):
+                s.save(verbose=verbose)
+
             if verbose:
-                print(f'target_dt: {target_dt}')
-
-            ratio = target_dt / s.dt
-            if verbose:
-                print(f'Old dt: {s.dt}, ratio: {ratio}')
-
-            if ratio < 1.1025 and ratio > 0.9025:
-                s.dt = np.sqrt(ratio) * s.dt
-            elif ratio >= 1.025:
-                s.dt = 1.05 * s.dt
-            elif ratio <= 0.9025:
-                s.dt = 0.95 * s.dt
-
-            #s.dt = s.fluid_cfl()
-            s.time += s.dt
-            s.times.append(s.time)
-
-            if verbose:
-                print(f'Time step limited to: {s.dt} at time: {s.time}')
-
-            #resolve fluid velocity and update electron density using continuity equation
-            s.continuity()
-
-        if smooth:
-            s.n = gaussian_filter(s.n, sigma=smooth_sigma)
-            s.u_r = gaussian_filter(s.u_r, sigma=smooth_sigma)
-            s.u_z = gaussian_filter(s.u_z, sigma=smooth_sigma)
-
-        if save and (s.iter % save_every == 0):
-            s.save(verbose=verbose)
-
-        if verbose:
-            print(f'Step took: {time.time() - t}')
+                print(f'Step took: {time.time() - t}')
 
     def constant_dt_step(s, dt, method='Drift-Diffusion', iterations=1000, sp_r=0.97, EPS=1e-10, save=True, verbose=True, save_every=10):
         '''
