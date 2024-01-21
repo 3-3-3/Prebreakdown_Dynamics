@@ -210,10 +210,10 @@ class Prebreakdown:
                 #resolve fluid velocity and update electron density using continuity equation
                 s.continuity()
 
-            if smooth:
-                s.n = gaussian_filter(s.n, sigma=smooth_sigma)
-                s.u_r = gaussian_filter(s.u_r, sigma=smooth_sigma)
-                s.u_z = gaussian_filter(s.u_z, sigma=smooth_sigma)
+                if smooth:
+                    s.n = gaussian_filter(s.n, sigma=smooth_sigma)
+                    s.u_r = gaussian_filter(s.u_r, sigma=smooth_sigma)
+                    s.u_z = gaussian_filter(s.u_z, sigma=smooth_sigma)
 
             if save and (s.iter % save_every == 0):
                 s.save(verbose=verbose)
