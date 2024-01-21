@@ -31,6 +31,12 @@ def step_boundary(amp, r_max):
     '''
     return lambda r, t : amp if r <= r_max else 0
 
+def log_step(V_0, r_0, R):
+    '''
+    Boundary that is constant at V_0 out until r_0, then decays logarithmically to 0 by the maximum R in domain
+    '''
+    return lambda r, t : V_0 if r <= R else V_0 * (1 - np.ln(R / r_0))
+
 def gaussian_boundary(power, std):
     return lambda r, t : power / (np.sqrt(2*np.pi)*std) * np.exp(-1/2*(r/std)**2)
 
