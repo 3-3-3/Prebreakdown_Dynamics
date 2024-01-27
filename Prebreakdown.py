@@ -334,13 +334,14 @@ class Prebreakdown:
                                 - 4*s.dt/(s.rr[j,l+1]**2-s.rr[j,l-1]**2)*(s.rr[j,l+1]*s.n[j,l+1]*s.u_r[j,l+1]-s.rr[j,l-1]*s.n[j,l-1]*s.u_r[j,l-1])
 
         #Update boundaries at j=J-1
-        for l in range(1,l_max):
+        for l in range(l_max):
             #boundary condition at j=J-1 (diffuse)
             n_new[j_max-1,l] = s.n[j_max-2,l] \
                             - 4*s.dt/(s.rr[j_max-1,l+1]**2-s.rr[j_max-1,l-1]**2)*(s.rr[j_max-1,l+1]*s.n[j_max-1,l+1]*s.u_r[j_max-1,l+1]-s.rr[j_max-1,l-1]*s.n[j_max-1,l-1]*s.u_r[j_max-1,l-1])
 
             #boundary condition at j=0 (von Neumann)
-            n_new[0,l] = s.n_old[0,l] + s.dt * s.n_bottom(s.rr[0,l], s.time) * s.u_z_bottom(s.rr[0,l], s.time)
+            #n_new[0,l] = s.n_bottom(s.rr[0,l],s.time)
+            n_new[1,l] = s.n_old[1,l] + s.dt * s.n_bottom(s.rr[0,l], s.time) * s.u_z_bottom(s.rr[0,l], s.time)
 
         #Update boundaries at l=0 and l=L
         for j in range(2,j_max-1):
