@@ -1,7 +1,8 @@
-# Prebreakdown_Dynamics
+![image](https://github.com/3-3-3/Prebreakdown_Dynamics/assets/22379958/a1bd19c2-8a65-4aa9-a3a7-19dd9c45bd4b)# Prebreakdown_Dynamics
 A spark gap is created by applying a sufficiently high voltage, known as the breakdown voltage, across two electrodes so that a free electron gains enough energy on its average path between collisions with air molecules to ionize those molecules. This results in a chain reaction in which a plasma, known as a streamer, forms and allows the built-up voltage to discharge across the gap. During the summer of 2022, we held a spark gap just below its breakdown voltage, and then concentrated ultraviolet light onto the cathode which pulls electron out of the metal due to the photoelectric effect. It was observed that this triggered streamer discharges at applied voltages below breakdown. Now, we are seeking to understand the details of how we were able to boost the applied electric field and trigger a streamer discharge by modelling electron dynamics prior to breakdown. 
 
-* Thesis.pdf: Here, I develop the physical models used in this simulation from first principles and describre initial results of the simulation and limitations of the model. I also include an appendix which describes the discretization schemes used to achieve stable solutions to Poisson's equation, the electron continuity equation, and the electron momentum equation.
+* Thesis.pdf: Here, I develop the physical models used in this simulation from first principles and describe initial results of the simulation and limitations of the model. I also include an appendix which describes the discretization schemes used to achieve stable solutions to Poisson's equation, the electron continuity equation, and the electron momentum equation.
 * Prebreakdown.py: defines the Prebreakdown class, which defines the main object for conducting numerical simulations. Includes functionality for resolving the electric potential using successive overrelaxation and updating the electron number density using the electron momentum equation and continuity equation instead. Methods which use the drift-diffusion prescription are untested.
-* Util.py: Functions used for vizualization and animation.
+* Util.py: Functions used for visualization and animation.
+
 
